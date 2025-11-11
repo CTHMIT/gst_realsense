@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RealSense D435i Streaming Sender
+RealSense D435i Streaming Sender with Auto-Detection
 Streams camera data to remote server
 """
 
@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, Optional
 import logging
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from interface.gstreamer import GStreamerInterface, StreamType, StreamingConfigManager
@@ -27,7 +26,6 @@ class StreamingSender:
         self.interface = GStreamerInterface(self.config)
         self.running = False
         
-        # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
@@ -41,63 +39,66 @@ class StreamingSender:
         self,
         stream_types: List[StreamType],
         source_topics: Optional[dict] = None,
-        use_test_source: bool = False
+        use_test_source: bool = False,
+        auto_detect: bool = True
     ):
         """
         Start streaming
         
         Args:
             stream_types: List of streams to send
-            source_topics: ROS2 topics for camera data (if None, uses test sources)
+            source_topics: ROS2 topics for camera data
             use_test_source: Force use of test sources
+            auto_detect: Auto-detect RealSense devices
         """
         LOGGER.info("=" * 60)
         LOGGER.info("Starting RealSense D435i Streaming Sender")
         LOGGER.info("=" * 60)
         
-        # Validate configuration
         LOGGER.info(f"Client: {self.config.network.client.ip} ({self.config.network.client.type})")
         LOGGER.info(f"Server: {self.config.network.server.ip}")
         LOGGER.info(f"Protocol: {self.config.network.transport.protocol.upper()}")
         LOGGER.info(f"Resolution: {self.config.realsense_camera.resolution} @ {self.config.realsense_camera.fps} fps")
         LOGGER.info(f"Codec: {self.config.streaming.rtp.codec}")
         
-        # Determine source topics
+        # Determine source
         topics = {}
-        if source_topics and not use_test_source:
+        if source_topics:
             topics = source_topics
-            LOGGER.info("Using ROS2 topics:")
+            LOGGER.info("\nUsing ROS2 topics:")
             for stream_type in stream_types:
                 topic = topics.get(stream_type)
                 if topic:
                     LOGGER.info(f"  {stream_type.value}: {topic}")
+        
         else:
-            LOGGER.info("Using test sources (videotestsrc)")
+            LOGGER.info("\nAuto-detecting RealSense devices...")
         
         # Start streams
-        LOGGER.info(f"Starting {len(stream_types)} stream(s)...")
+        LOGGER.info(f"\nStarting {len(stream_types)} stream(s)...")
         try:
-            self.interface.start_sender(stream_types, topics if topics else None)
+            self.interface.start_sender(
+                stream_types, 
+                topics if topics else None,
+                auto_detect=auto_detect and not use_test_source
+            )
             self.running = True
             
-            # Wait for startup
             time.sleep(self.config.streaming.startup_delay)
             
-            # Check status
             status = self.interface.get_pipeline_status()
-            LOGGER.info("Pipeline Status:")
+            LOGGER.info("\nPipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 port = self.config.get_stream_port(stream)
                 LOGGER.info(f"  {stream}: {status_str} (port {port})")
             
-            # Check if any failed
             if not all(status.values()):
-                LOGGER.error("Some pipelines failed to start!")
+                LOGGER.error("\nSome pipelines failed to start!")
                 self.stop()
                 return False
             
-            LOGGER.info("=" * 60)
+            LOGGER.info("\n" + "=" * 60)
             LOGGER.info("Streaming started successfully!")
             LOGGER.info("Press Ctrl+C to stop")
             LOGGER.info("=" * 60)
@@ -112,7 +113,7 @@ class StreamingSender:
     def stop(self):
         """Stop all streams"""
         if self.running:
-            LOGGER.info("Stopping streams...")
+            LOGGER.info("\nStopping streams...")
             self.interface.stop_all()
             self.running = False
             LOGGER.info("All streams stopped")
@@ -123,17 +124,16 @@ class StreamingSender:
             while self.running:
                 time.sleep(1)
                 
-                # Periodic health check
                 status = self.interface.get_pipeline_status()
                 if not all(status.values()):
                     LOGGER.warning("Some pipelines stopped unexpectedly!")
                     for stream, running in status.items():
                         if not running:
-                            LOGGER.error(f"{stream}: STOPPED")
+                            LOGGER.error(f"  {stream}: STOPPED")
                     break
                     
         except KeyboardInterrupt:
-            LOGGER.info("Interrupted by user")
+            LOGGER.info("\nInterrupted by user")
         finally:
             self.stop()
 
@@ -141,10 +141,13 @@ class StreamingSender:
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="RealSense D435i Streaming Sender",
+        description="RealSense D435i Streaming Sender with Auto-Detection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Auto-detect RealSense and send all streams
+  python sender.py --all
+  
   # Send all streams using test sources
   python sender.py --all --test
   
@@ -153,8 +156,8 @@ Examples:
     --color-topic /camera/color/image_raw \\
     --depth-topic /camera/depth/image_rect_raw
   
-  # Send only color stream
-  python sender.py --color --color-topic /camera/color/image_raw
+  # Send only color stream (auto-detect device)
+  python sender.py --color
         """
     )
     
@@ -165,7 +168,6 @@ Examples:
         help="Path to config.yaml (default: src/config/config.yaml)"
     )
     
-    # Stream selection
     stream_group = parser.add_argument_group("Stream Selection")
     stream_group.add_argument("--all", action="store_true", help="Enable all streams")
     stream_group.add_argument("--color", action="store_true", help="Enable color stream")
@@ -173,19 +175,12 @@ Examples:
     stream_group.add_argument("--infra1", action="store_true", help="Enable infrared 1 stream")
     stream_group.add_argument("--infra2", action="store_true", help="Enable infrared 2 stream")
     
-    # ROS2 topics
     topic_group = parser.add_argument_group("ROS2 Topics")
     topic_group.add_argument("--color-topic", type=str, help="Color stream ROS2 topic")
     topic_group.add_argument("--depth-topic", type=str, help="Depth stream ROS2 topic")
     topic_group.add_argument("--infra1-topic", type=str, help="Infrared 1 ROS2 topic")
     topic_group.add_argument("--infra2-topic", type=str, help="Infrared 2 ROS2 topic")
     
-    # Other options
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Use test sources (videotestsrc) instead of ROS2 topics"
-    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -199,11 +194,10 @@ def main():
     """Main entry point"""
     args = parse_args()
     
-    # Set log level
     if args.verbose:
         LOGGER.setLevel(logging.DEBUG)
     
-    # Determine which streams to enable
+    # Determine streams
     stream_types = []
     if args.all:
         stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2]
@@ -218,10 +212,10 @@ def main():
             stream_types.append(StreamType.INFRA2)
     
     if not stream_types:
-        LOGGER.error("No streams selected! Use --all or specify individual streams (--color, --depth, etc.)")
+        LOGGER.error("No streams selected! Use --all or specify individual streams")
         sys.exit(1)
     
-    # Build source topics dictionary
+    # Build source topics
     source_topics = {}
     if args.color_topic and StreamType.COLOR in stream_types:
         source_topics[StreamType.COLOR] = args.color_topic
@@ -235,7 +229,12 @@ def main():
     # Create and start sender
     try:
         sender = StreamingSender(args.config)
-        success = sender.start(stream_types, source_topics, args.test)
+        success = sender.start(
+            stream_types, 
+            source_topics, 
+            args.test,
+            auto_detect=not args.no_auto_detect
+        )
         
         if success:
             sender.run_forever()
