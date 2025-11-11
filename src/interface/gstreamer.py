@@ -199,64 +199,55 @@ class GStreamerInterface:
             
             return source_element
     
-    def _build_encoder(self, stream_type: StreamType, stream_config: StreamConfig) -> str:
-        """Build H.264 encoder element with proper configuration"""
-        rtp_config = self.config.streaming.rtp
-        queue_config = self.config.streaming.queue
-        
-        queue = f"queue max-size-buffers={queue_config.max_size_buffers} leaky={queue_config.leaky}"
-        
-        if rtp_config.codec == "nvv4l2h264enc":
+    def _build_encoder(self, stream_type: StreamType, scfg: StreamConfig) -> str:
+        rtp = self.config.streaming.rtp
+        qcfg = self.config.streaming.queue
+        q = f"queue max-size-buffers={qcfg.max_size_buffers} leaky={qcfg.leaky}"
+
+        bitrate_kbps = int(scfg.bitrate)
+        bitrate_bps = bitrate_kbps * 1000
+
+        if rtp.codec == "nvv4l2h264enc":
             if stream_type == StreamType.DEPTH:
-                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
+                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             else:
-                converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
+                conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             
-            encoder = (
-                f"nvv4l2h264enc "
-                f"bitrate={stream_config.bitrate * 1000} "
-                f"control-rate=1 "
-                f"preset-level=2 "
+            enc = (
+                "nvv4l2h264enc "
+                f"bitrate={bitrate_bps} control-rate=1 preset-level=2 "
                 f"iframeinterval={self.config.realsense_camera.fps * 2} "
-                f"! h264parse "
-                f"! video/x-h264,profile=baseline,stream-format=byte-stream"
+                "insert-sps-pps=1 maxperf-enable=1 "
+                "! h264parse ! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
-        
-        elif rtp_config.codec == "nvh264enc":
-            # Legacy NVENC
+            return f"{q} ! {conv} ! {enc}"
+
+        if rtp.codec == "nvh264enc":
             if stream_type == StreamType.DEPTH:
-                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
+                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             else:
-                converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
-            
-            encoder = (
-                f"nvh264enc "
-                f"bitrate={stream_config.bitrate} "
-                f"preset=low-latency-hq "
-                f"zerolatency=true "
+                conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+            enc = (
+                "nvh264enc "
+                f"bitrate={bitrate_bps} preset=low-latency-hq zerolatency=true "
                 f"iframeinterval={self.config.realsense_camera.fps * 2} "
-                f"! video/x-h264,profile=baseline,stream-format=byte-stream"
+                "! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
-        
-        else:  # x264enc
-            if stream_type == StreamType.COLOR:
-                converter = "videoconvert ! video/x-raw,format=I420"
-            elif stream_type == StreamType.DEPTH:
-                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
-            else:
-                converter = "videoconvert ! video/x-raw,format=GRAY8"
-            
-            encoder = (
-                f"x264enc "
-                f"bitrate={stream_config.bitrate} "
-                f"tune={rtp_config.tune} "
-                f"speed-preset={rtp_config.speed} "
-                f"key-int-max={self.config.realsense_camera.fps * 2} "
-                f"threads={self.config.streaming.processing.n_threads} "
-                f"! video/x-h264,profile=baseline,stream-format=byte-stream"
-            )
-        
-        return f"{queue} ! {converter} ! {encoder}"
+            return f"{q} ! {conv} ! {enc}"
+        if stream_type == StreamType.COLOR:
+            conv = "videoconvert ! video/x-raw,format=I420"
+        elif stream_type == StreamType.DEPTH:
+            conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+        else:
+            conv = "videoconvert ! video/x-raw,format=GRAY8"
+        enc = (
+            "x264enc "
+            f"bitrate={bitrate_kbps} tune={rtp.tune} speed-preset={rtp.speed} "
+            f"key-int-max={self.config.realsense_camera.fps * 2} "
+            f"threads={self.config.streaming.processing.n_threads} "
+            "! video/x-h264,profile=baseline,stream-format=byte-stream"
+        )
+        return f"{q} ! {conv} ! {enc}"
     
     def _build_payloader(self, stream_type: StreamType) -> str:
         """Build RTP payloader (H.264 only)"""
