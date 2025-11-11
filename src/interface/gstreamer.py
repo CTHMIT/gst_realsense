@@ -148,7 +148,7 @@ class GStreamerInterface:
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
         
-        if stream_type == StreamType.DEPTH and stream_config.encoding == "lz4":
+        if stream_config.encoding == "lz4":
             # --- LZ4 Lossless Pipeline (Depth Only) ---
             LOGGER.info(f"Building LZ4 (lossless) sender pipeline for {stream_type.value}")
             source = self._build_source(stream_type, source_device, source_topic)
@@ -305,7 +305,7 @@ class GStreamerInterface:
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
                 
-        if stream_type == StreamType.DEPTH and stream_config.encoding == "lz4":
+        if stream_config.encoding == "lz4":
             # --- LZ4 Lossless Pipeline (Depth Only) ---
             LOGGER.info(f"Building LZ4 (lossless) receiver pipeline for {stream_type.value}")
             source = self._build_receiver_source(port, stream_config)
@@ -482,7 +482,7 @@ class GStreamerInterface:
         """
         stream_config = self._get_stream_config(pipeline.stream_type)
         
-        if pipeline.stream_type == StreamType.DEPTH and stream_config.encoding == "lz4":
+        if stream_config.encoding == "lz4":
             LOGGER.info(f"Launching LZ4 pipeline for {pipeline.stream_type.value}...")
             self._launch_pygobject_pipeline(pipeline)
         else:

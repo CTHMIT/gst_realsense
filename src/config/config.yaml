@@ -32,7 +32,7 @@ realsense_camera:
 
       infra1:  
         camera_format: "Y8"
-        encoding: "h264"
+        encoding: "lz4"
         port: 5030
         gstreamer_format: "GRAY8"
         ros_fomat: "mono8"
@@ -40,7 +40,7 @@ realsense_camera:
 
       infra2:  
         camera_format: "Y8"
-        encoding: "h264"
+        encoding: "lz4"
         port: 5040
         gstreamer_format: "GRAY8"
         ros_fomat: "mono8"
