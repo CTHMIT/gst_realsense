@@ -75,9 +75,14 @@ class GStreamerInterface:
     
     # ==================== Device Detection ====================
     
-    def detect_realsense_device(self, stream_type: StreamType) -> Optional[str]:
+    def detect_realsense_device(
+        self, 
+        stream_type: StreamType,
+        exclude_devices: List[str] = None  # <-- 新增
+    ) -> Optional[str]:
         """
-        Auto-detect RealSense camera device for given stream type
+        Auto-detect RealSense camera device for given stream type,
+        excluding devices that are already in use.
         """
         stream_formats = {
             StreamType.COLOR: ["YUYV", "RGB3", "BGR3"],
@@ -86,10 +91,15 @@ class GStreamerInterface:
             StreamType.INFRA2: ["Y8", "GREY", "GRAY8"]
         }
         
+        exclude_devices = exclude_devices or [] 
+        
         try:
             devices = sorted(glob.glob("/dev/video*"))
             
             for device in devices:
+                if device in exclude_devices: 
+                    continue
+                    
                 # Check if RealSense device
                 try:
                     info_result = subprocess.run(
@@ -434,13 +444,18 @@ class GStreamerInterface:
         """
         source_topics = source_topics or {}
         source_devices = source_devices or {}
+
+        allocated_devices: List[str] = []
         
         for stream_type in stream_types:
             topic = source_topics.get(stream_type)
             device = source_devices.get(stream_type)
             
             if not topic and not device and auto_detect:
-                device = self.detect_realsense_device(stream_type)
+                device = self.detect_realsense_device(
+                    stream_type, 
+                    exclude_devices=allocated_devices
+                )
                 if device:
                     LOGGER.info(f"Using auto-detected device: {device}")
                 else:
@@ -633,7 +648,7 @@ class GStreamerInterface:
                         pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
                         LOGGER.info(f"{stream_type.value} reached NULL.")
 
-                    if pipeline.udp_socket: #
+                    if pipeline.udp_socket:
                         pipeline.udp_socket.close()
                     
                     if pipeline.socket_thread: 
