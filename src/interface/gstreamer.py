@@ -178,7 +178,7 @@ class GStreamerInterface:
             if stream_type == StreamType.COLOR:
                 return f"v4l2src device={device} ! video/x-raw,format='YUY2 ',width={width},height={height},framerate={fps}/1 ! videoconvert ! video/x-raw,format=RGB"
             elif stream_type == StreamType.DEPTH:
-                return f"v4l2src device={device} ! video/x-raw,format='Y16 ',width={width},height={height},framerate={fps}/1"
+                return f"v4l2src device={device} ! video/x-raw,format='GRAY8 ',width={width},height={height},framerate={fps}/1"
             else:  # Infrared
                 return f"v4l2src device={device} ! video/x-raw,format='GRAY8 ',width={width},height={height},framerate={fps}/1"
     
@@ -417,7 +417,7 @@ class GStreamerInterface:
     def _launch_pipeline(self, pipeline: GStreamerPipeline):
         """Launch a GStreamer pipeline with improved error handling"""
         cmd = f"gst-launch-1.0 {pipeline.pipeline_str}"
-        LOGGER.debug(f"Launching: {cmd}")
+        
         
         try:
             process = subprocess.Popen(
@@ -430,7 +430,7 @@ class GStreamerInterface:
             pipeline.process = process
             self.pipelines[pipeline.stream_type] = pipeline
             LOGGER.info(f"Launched pipeline for {pipeline.stream_type.value} (PID: {process.pid})")
-            
+            LOGGER.info(f"Launching: {cmd}")
             try:
                 return_code = process.wait(timeout=0.5)
                 if return_code != 0:
