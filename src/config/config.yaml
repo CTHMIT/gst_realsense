@@ -26,7 +26,7 @@ realsense_camera:
         camera_format: "RGB8"  
         encoding: "h264"
         port: 5010
-        gstreamer_format: "RGB"
+        gstreamer_format: "YUY2"
         ros_fomat: "rgb8"
         bitrate: 8000
 
