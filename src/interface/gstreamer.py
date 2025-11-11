@@ -425,7 +425,101 @@ class GStreamerInterface:
                 return "videoconvert ! xvimagesink sync=false"
     
     # ==================== Pipeline Management ====================
+
+    def _detect_y8i_device(self, exclude_devices: List[str]) -> Optional[str]:
+        """
+        Detects a RealSense device that supports Y8I (interleaved) format.
+        """
+        LOGGER.info(f"Detecting Y8I (interleaved) infrared device, excluding: {exclude_devices}")
+        try:
+            devices = sorted(glob.glob("/dev/video*"))
+            
+            for device in devices:
+                if device in exclude_devices:
+                    continue
+                
+                try:
+                    # 1. Check if it's a RealSense device
+                    info_result = subprocess.run(
+                        ["v4l2-ctl", "--device", device, "--info"],
+                        capture_output=True, text=True, timeout=2
+                    )
+                    if info_result.returncode != 0 or \
+                       ("RealSense" not in info_result.stdout and "Intel" not in info_result.stdout):
+                        continue
+                    
+                    # 2. Check if it supports Y8I
+                    fmt_result = subprocess.run(
+                        ["v4l2-ctl", "--device", device, "--list-formats-ext"],
+                        capture_output=True, text=True, timeout=2
+                    )
+                    if fmt_result.returncode == 0 and "Y8I " in fmt_result.stdout: # 注意 'Y8I ' 後面的空格
+                        LOGGER.info(f"Detected Y8I support at {device}")
+                        return device
+                        
+                except subprocess.TimeoutExpired:
+                    continue
+                except Exception as e:
+                    LOGGER.debug(f"Error checking {device} for Y8I: {e}")
+                    continue
+                    
+        except Exception as e:
+            LOGGER.warning(f"Y8I device detection failed: {e}")
+            
+        return None
     
+    def _build_interleaved_infra_pipeline_str(self, device: str) -> str:
+        """
+        Builds a single GStreamer pipeline string that reads from a Y8I (interleaved)
+        source, deinterlaces it, and encodes/sends both infra1 and infra2.
+        """
+        w = self.config.realsense_camera.width  # 640
+        h = self.config.realsense_camera.height # 480
+        fps = self.config.realsense_camera.fps # 30
+        
+        # Y8I 640x480 包含兩個 640x240 的影像
+        out_w = w
+        out_h = h // 2 # 輸出將是 640x240
+        
+        # 1. Source: v4l2src (Y8I) -> deinterlace -> 'd' element
+        source = (
+            f"v4l2src device={device} ! "
+            f"video/x-raw,format=Y8I,width={w},height={h},framerate={fps}/1 ! "
+            "deinterlace name=d"
+        )
+        
+        # 2. Infra1 Branch (從 d.src_0 輸出)
+        scfg1 = self._get_stream_config(StreamType.INFRA1)
+        port1 = self._get_port(StreamType.INFRA1)
+        pay1 = self._build_payloader(StreamType.INFRA1)
+        sink1 = self._build_sender_sink(port1)
+        # _build_encoder 將正確處理 GRAY8 -> I420 -> NV12(hw)
+        enc1 = self._build_encoder(StreamType.INFRA1, scfg1) 
+        
+        branch1 = (
+            f"d.src_0 ! "
+            f"video/x-raw,width={out_w},height={out_h},framerate={fps}/1 ! " # 強制指定 640x240
+            f"{enc1} ! {pay1} ! {sink1}"
+        )
+
+        # 3. Infra2 Branch (從 d.src_1 輸出)
+        scfg2 = self._get_stream_config(StreamType.INFRA2)
+        port2 = self._get_port(StreamType.INFRA2)
+        pay2 = self._build_payloader(StreamType.INFRA2)
+        sink2 = self._build_sender_sink(port2)
+        enc2 = self._build_encoder(StreamType.INFRA2, scfg2)
+
+        branch2 = (
+            f"d.src_1 ! "
+            f"video/x-raw,width={out_w},height={out_h},framerate={fps}/1 ! " # 強制指定 640x240
+            f"{enc2} ! {pay2} ! {sink2}"
+        )
+        
+        # 4. 組合管線
+        pipeline_str = f"{source} {branch1} {branch2}"
+        LOGGER.debug(f"Built interleaved infra pipeline: {pipeline_str}")
+        return pipeline_str
+
     def start_sender(
         self,
         stream_types: List[StreamType],
@@ -434,19 +528,60 @@ class GStreamerInterface:
         auto_detect: bool = True
     ):
         """
-        Start sender pipelines for specified streams
-        
-        Args:
-            stream_types: List of streams to send
-            source_topics: Optional mapping of stream types to ROS2 topics
-            source_devices: Optional mapping of stream types to device paths
-            auto_detect: Auto-detect RealSense devices if True
+        Start sender pipelines for specified streams.
+        Attempts to use Y8I interleaved mode if infra1 and infra2 are requested.
         """
         source_topics = source_topics or {}
         source_devices = source_devices or {}
         
         allocated_devices: List[str] = [] 
         
+        # --- 新增：Y8I (Interleaved) 模式優先處理 ---
+        # 檢查是否 (infra1 和 infra2 都在) 且 (不在用 ROS 主題)
+        if (StreamType.INFRA1 in stream_types and 
+            StreamType.INFRA2 in stream_types and
+            auto_detect and
+            not source_topics.get(StreamType.INFRA1) and
+            not source_topics.get(StreamType.INFRA2)):
+            
+            LOGGER.info("Both INFRA1 and INFRA2 requested, attempting interleaved Y8I mode...")
+            try:
+                # 1. 偵測 Y8I 裝置 (排除稍後 color/depth 要用的)
+                infra_dev = self._detect_y8i_device(allocated_devices)
+                
+                if infra_dev:
+                    LOGGER.info(f"Found Y8I device at {infra_dev}. Building interleaved pipeline.")
+                    allocated_devices.append(infra_dev)
+                    
+                    # 2. 建立 Y8I 管線字串
+                    pipeline_str = self._build_interleaved_infra_pipeline_str(infra_dev)
+                    
+                    # 3. 建立 GStreamerPipeline 物件
+                    # 我們將這個"組合"管線標記為 INFRA1
+                    pipeline_obj = GStreamerPipeline(
+                        pipeline_str=pipeline_str,
+                        stream_type=StreamType.INFRA1, # "主" 串流
+                        port=self.config.get_stream_port("infra1")
+                    )
+                    
+                    # 4. 啟動管線
+                    self._launch_pipeline(pipeline_obj)
+                    
+                    # 5. 從待處理列表中移除 infra1 和 infra2
+                    stream_types.remove(StreamType.INFRA1)
+                    stream_types.remove(StreamType.INFRA2)
+                    LOGGER.info("Successfully launched interleaved Y8I pipeline for INFRA1 & INFRA2.")
+                    
+                else:
+                    LOGGER.warning("No Y8I device found. Falling back to individual GRAY8 (will likely fail).")
+                    
+            except Exception as e:
+                LOGGER.error(f"Failed to launch interleaved Y8I pipeline: {e}")
+                # 如果 Y8I 失敗，讓迴圈繼續，它會像以前一樣嘗試單獨啟動並失敗
+        
+        # --- Y8I 邏輯結束 ---
+
+        # 正常迴圈，處理 color, depth, 以及任何 Y8I 失敗的 infra
         for stream_type in stream_types:
             topic = source_topics.get(stream_type)
             device = source_devices.get(stream_type)
@@ -459,13 +594,21 @@ class GStreamerInterface:
                 
                 if device:
                     LOGGER.info(f"Using auto-detected device: {device} for {stream_type.value}")
-                    allocated_devices.append(device) 
+                    allocated_devices.append(device)
                 else:
-                    LOGGER.warning(f"No device detected for {stream_type.value}, using test source")
+                    LOGGER.warning(f"No device detected for {stream_type.value}, skipping this stream.")
+                    continue 
             
+            elif not device and not topic:
+                 LOGGER.warning(f"No device or topic specified for {stream_type.value}, skipping this stream.")
+                 continue
+
             pipeline = self.build_sender_pipeline(stream_type, device, topic)
             
-            self._launch_pipeline(pipeline)
+            try:
+                self._launch_pipeline(pipeline)
+            except Exception as e:
+                LOGGER.error(f"Failed to launch pipeline for {stream_type.value}: {e}")
 
     def start_receiver(
         self,
