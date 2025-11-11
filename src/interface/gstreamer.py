@@ -210,6 +210,9 @@ class GStreamerInterface:
         if rtp.codec == "nvv4l2h264enc":
             if stream_type == StreamType.DEPTH:
                 conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+            elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                conv = "videoconvert ! video/x-raw,format=I420 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+            
             else:
                 conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             
@@ -619,33 +622,26 @@ class GStreamerInterface:
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
             pipeline.running = False 
             
-            if pipeline.process:
+            if pipeline.gst_pipeline:
                 try:
-                    pipeline.process.terminate()
-                    try:
-                        pipeline.process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        LOGGER.warning(f"H.264 pipeline {stream_type.value} did not terminate, killing...")
-                        pipeline.process.kill()
-                        pipeline.process.wait()
+                    state_change = pipeline.gst_pipeline.set_state(Gst.State.NULL)
                     
-                    LOGGER.info(f"Stopped H.264 pipeline for {stream_type.value}")
-                except Exception as e:
-                    LOGGER.error(f"Error stopping H.264 pipeline {stream_type.value}: {e}")
-            
-            elif pipeline.gst_pipeline:
-                try:
-                    pipeline.gst_pipeline.set_state(Gst.State.NULL)
-                    
-                    if pipeline.udp_socket:
+                    if state_change == Gst.StateChangeReturn.SUCCESS:
+                        LOGGER.info(f"Set {stream_type.value} to NULL successfully.")
+                    elif state_change == Gst.StateChangeReturn.ASYNC:
+                        LOGGER.info(f"Waiting for {stream_type.value} to reach NULL...")
+                        pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+                        LOGGER.info(f"{stream_type.value} reached NULL.")
+
+                    if pipeline.udp_socket: #
                         pipeline.udp_socket.close()
                     
-                    if pipeline.socket_thread:
+                    if pipeline.socket_thread: 
                         pipeline.socket_thread.join(timeout=2)
                         
-                    LOGGER.info(f"Stopped LZ4 pipeline for {stream_type.value}")
+                    LOGGER.info(f"Stopped PyGObject pipeline for {stream_type.value}")
                 except Exception as e:
-                    LOGGER.error(f"Error stopping LZ4 pipeline {stream_type.value}: {e}")
+                    LOGGER.error(f"Error stopping PyGObject pipeline {stream_type.value}: {e}")
             
             del self.pipelines[stream_type]
     
