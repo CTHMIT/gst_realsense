@@ -7,60 +7,55 @@ echo "=========================================="
 echo "Configuring for JetPack 6.x"
 echo "=========================================="
 
-# Disable problematic repos
+echo "Disabling RealSense repo to prevent apt update failures..."
 sudo mv /etc/apt/sources.list.d/librealsense.list{,.disabled} 2>/dev/null || true
 
-# Check L4T version
-if [ -f /etc/nv_tegra_release ]; then
-    L4T_VERSION=$(cat /etc/nv_tegra_release | grep -oP 'R\d+' || echo "unknown")
-    echo "Detected L4T: $L4T_VERSION"
-fi
-
-# Install base multimedia packages
-echo "Installing multimedia packages..."
+echo "Installing GStreamer and multimedia packages..."
 sudo apt-get update || true
 sudo apt-get install -y \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
     nvidia-l4t-multimedia \
-    nvidia-l4t-multimedia-utils || echo "Already installed"
+    nvidia-l4t-multimedia-utils
 
-# For JetPack 6.0+, check if gstreamer NVENC elements are available
 echo ""
 echo "Checking GStreamer NVENC availability..."
 
-# Try to find nvenc elements
-if gst-inspect-1.0 | grep -q nvv4l2h264enc; then
-    echo "✓ nvv4l2h264enc available (new API)"
-elif gst-inspect-1.0 | grep -q nvh264enc; then
-    echo "✓ nvh264enc available (legacy API)"
+if gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1; then
+    echo "  ✓ nvv4l2h264enc available (JetPack 6.x new API)"
+elif gst-inspect-1.0 nvh264enc >/dev/null 2>&1; then
+    echo "  ✓ nvh264enc available (legacy API)"
 else
-    echo "⚠ No NVENC hardware encoder found"
-    echo "Installing additional packages..."
-    
-    # Install video4linux2 packages
-    sudo apt-get install -y \
-        v4l-utils \
-        libv4l-dev || true
+    echo "  ⚠ WARNING: No NVENC hardware encoder (nvv4l2h264enc/nvh264enc) found."
+    echo "  This might indicate an issue with your JetPack multimedia installation."
 fi
 
-# Configure power mode
 echo ""
 echo "Configuring performance..."
-sudo nvpmodel -m 0 2>/dev/null || echo "nvpmodel not available"
-sudo jetson_clocks 2>/dev/null || echo "jetson_clocks not available"
+sudo nvpmodel -m 0 2>/dev/null || echo "  nvpmodel not available"
+sudo jetson_clocks 2>/dev/null || echo "  jetson_clocks not available"
 
-# UDP buffers
 echo "Configuring network buffers..."
 sudo sysctl -w net.core.rmem_max=134217728
 sudo sysctl -w net.core.wmem_max=134217728
+sudo sysctl -w net.core.rmem_default=134217728
+sudo sysctl -w net.core.wmem_default=134217728
 
-# Make persistent
-if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+if ! grep -q "# Custom UDP Buffers" /etc/sysctl.conf; then
+    echo "Making network buffers persistent..."
     cat << EOF | sudo tee -a /etc/sysctl.conf
+
+# Custom UDP Buffers for RealSense/GStreamer
 net.core.rmem_max=134217728
 net.core.rmem_default=134217728
 net.core.wmem_max=134217728
 net.core.wmem_default=134217728
 EOF
+else
+    echo "Network buffers already persistent."
 fi
 
 echo ""
@@ -68,7 +63,6 @@ echo "=========================================="
 echo "GStreamer Elements Check"
 echo "=========================================="
 
-# Check all possible encoders
 echo "H.264 Encoders:"
 gst-inspect-1.0 x264enc >/dev/null 2>&1 && echo "  ✓ x264enc (software)" || echo "  ✗ x264enc"
 gst-inspect-1.0 nvh264enc >/dev/null 2>&1 && echo "  ✓ nvh264enc (legacy hw)" || echo "  ✗ nvh264enc"
@@ -97,9 +91,4 @@ echo ""
 echo "=========================================="
 echo "Configuration Complete"
 echo "=========================================="
-echo ""
-echo "Next steps:"
-echo "1. For JetPack 6.x, update config.yaml codec to 'x264enc'"
-echo "2. Run: make check-gstreamer"
-echo "3. Test: make test-sender"
 echo ""
