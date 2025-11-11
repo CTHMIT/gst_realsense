@@ -78,7 +78,7 @@ class GStreamerInterface:
     def detect_realsense_device(
         self, 
         stream_type: StreamType,
-        exclude_devices: List[str] = None  # <-- 新增
+        exclude_devices: List[str] = None  # <-- 這是修改
     ) -> Optional[str]:
         """
         Auto-detect RealSense camera device for given stream type,
@@ -444,8 +444,8 @@ class GStreamerInterface:
         """
         source_topics = source_topics or {}
         source_devices = source_devices or {}
-
-        allocated_devices: List[str] = []
+        
+        allocated_devices: List[str] = [] 
         
         for stream_type in stream_types:
             topic = source_topics.get(stream_type)
@@ -456,15 +456,17 @@ class GStreamerInterface:
                     stream_type, 
                     exclude_devices=allocated_devices
                 )
+                
                 if device:
-                    LOGGER.info(f"Using auto-detected device: {device}")
+                    LOGGER.info(f"Using auto-detected device: {device} for {stream_type.value}")
+                    allocated_devices.append(device) 
                 else:
                     LOGGER.warning(f"No device detected for {stream_type.value}, using test source")
             
             pipeline = self.build_sender_pipeline(stream_type, device, topic)
             
             self._launch_pipeline(pipeline)
-    
+
     def start_receiver(
         self,
         stream_types: List[StreamType],
