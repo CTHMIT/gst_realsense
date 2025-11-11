@@ -24,7 +24,10 @@ sudo apt-get install -y \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-good1.0-dev \
-    libgstreamer-plugins-bad1.0-dev
+    libgstreamer-plugins-bad1.0-dev \
+    python3-gi \
+    python3-gi-cairo \
+    gir1.2-gst-rtsp-server-1.0 \
 
 echo "Installing Video Codecs..."
 sudo apt-get install -y \

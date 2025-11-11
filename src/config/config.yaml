@@ -47,11 +47,11 @@ realsense_camera:
         bitrate: 8000
 
       depth:
-        camera_format: "Z16"
-        encoding: "h264"
+        camera_format: "Z16"   
+        encoding: "lz4"    
         port: 5020        
-        gstreamer_format: "GRAY16_LE"
-        ros_fomat: "16UC1"
+        gstreamer_format: "GRAY16_LE" 
+        ros_fomat: "16UC1" 
         bitrate: 8000
 
     imu:
