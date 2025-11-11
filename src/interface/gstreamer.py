@@ -12,8 +12,7 @@ import glob
 import threading
 import socket
 import lz4.frame
-
-# [新增] PyGObject 和 GStreamer 核心
+import time  
 import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
