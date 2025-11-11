@@ -25,7 +25,7 @@ echo ""
 echo "Checking GStreamer NVENC availability..."
 
 if gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1; then
-    echo "  ✓ nvv4l2h264enc available (JetPack 6.x new API)"
+    echo "  ✓ nvv4l2h264enc available (JetPack 6.x)"
 elif gst-inspect-1.0 nvh264enc >/dev/null 2>&1; then
     echo "  ✓ nvh264enc available (legacy API)"
 else
@@ -66,13 +66,13 @@ echo "=========================================="
 echo "H.264 Encoders:"
 gst-inspect-1.0 x264enc >/dev/null 2>&1 && echo "  ✓ x264enc (software)" || echo "  ✗ x264enc"
 gst-inspect-1.0 nvh264enc >/dev/null 2>&1 && echo "  ✓ nvh264enc (legacy hw)" || echo "  ✗ nvh264enc"
-gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1 && echo "  ✓ nvv4l2h264enc (new hw)" || echo "  ✗ nvv4l2h264enc"
+gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1 && echo "  ✓ nvv4l2h264enc (hw)" || echo "  ✗ nvv4l2h264enc"
 
 echo ""
 echo "H.264 Decoders:"
 gst-inspect-1.0 avdec_h264 >/dev/null 2>&1 && echo "  ✓ avdec_h264 (software)" || echo "  ✗ avdec_h264"
 gst-inspect-1.0 nvh264dec >/dev/null 2>&1 && echo "  ✓ nvh264dec (legacy hw)" || echo "  ✗ nvh264dec"
-gst-inspect-1.0 nvv4l2decoder >/dev/null 2>&1 && echo "  ✓ nvv4l2decoder (new hw)" || echo "  ✗ nvv4l2decoder"
+gst-inspect-1.0 nvv4l2decoder >/dev/null 2>&1 && echo "  ✓ nvv4l2decoder (hw)" || echo "  ✗ nvv4l2decoder"
 
 echo ""
 echo "RTP Elements:"
