@@ -191,7 +191,7 @@ class GStreamerInterface:
             v4l2_format = stream_config.gstreamer_format
             
             if v4l2_format:
-                gst_format_str = f"format='{v4l2_format.upper()}'"
+                gst_format_str = f"format={v4l2_format.upper()}"
             else:
                 raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
