@@ -372,7 +372,7 @@ class GStreamerInterface:
     def _launch_pipeline(self, pipeline: GStreamerPipeline):
         """Launch a GStreamer pipeline with improved error handling"""
         cmd = f"gst-launch-1.0 {pipeline.pipeline_str}"
-        
+        LOGGER.info(cmd)
         try:
             process = subprocess.Popen(
                 cmd,
