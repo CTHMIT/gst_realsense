@@ -128,24 +128,28 @@ class GStreamerInterface:
         queue_config = self.config.streaming.queue
         
         queue = f"queue max-size-buffers={queue_config.max_size_buffers} leaky={queue_config.leaky}"
-        
-        if stream_type == StreamType.COLOR:
-            converter = "videoconvert ! video/x-raw,format=I420"
-        elif stream_type == StreamType.DEPTH:
-            converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
-        else:  
-            converter = "videoconvert ! video/x-raw,format=I420"
-        
+                
         if rtp_config.codec == "nvh264enc":
+            if stream_type == StreamType.DEPTH:
+                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+            else:
+                converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
+
             encoder = (
                 f"nvh264enc "
                 f"bitrate={stream_config.bitrate} "
                 f"preset=low-latency-hq "
                 f"zerolatency=true "
-                f"gop-size={self.config.realsense_camera.fps * 2} "
+                f"iframeinterval={self.config.realsense_camera.fps * 2} " 
                 f"! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
+        
         elif rtp_config.codec == "nvv4l2h264enc":  
+            if stream_type == StreamType.DEPTH:
+                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+            else:
+                converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
+
             encoder = (
                 f"nvv4l2h264enc "
                 f"bitrate={stream_config.bitrate * 1000} " 
@@ -154,7 +158,15 @@ class GStreamerInterface:
                 f"iframeinterval={self.config.realsense_camera.fps * 2} "
                 f"! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
+        
         else:  # x264enc
+            if stream_type == StreamType.COLOR:
+                converter = "videoconvert ! video/x-raw,format=I420"
+            elif stream_type == StreamType.DEPTH:
+                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+            else:  
+                converter = "videoconvert ! video/x-raw,format=I420" 
+
             encoder = (
                 f"x264enc "
                 f"bitrate={stream_config.bitrate} "
