@@ -63,17 +63,17 @@ class StreamingSender:
         topics = {}
         if source_topics:
             topics = source_topics
-            LOGGER.info("\nUsing ROS2 topics:")
+            LOGGER.info("Using ROS2 topics:")
             for stream_type in stream_types:
                 topic = topics.get(stream_type)
                 if topic:
                     LOGGER.info(f"  {stream_type.value}: {topic}")
         
         else:
-            LOGGER.info("\nAuto-detecting RealSense devices...")
+            LOGGER.info("Auto-detecting RealSense devices...")
         
         # Start streams
-        LOGGER.info(f"\nStarting {len(stream_types)} stream(s)...")
+        LOGGER.info(f"Starting {len(stream_types)} stream(s)...")
         try:
             self.interface.start_sender(
                 stream_types, 
@@ -85,18 +85,18 @@ class StreamingSender:
             time.sleep(self.config.streaming.startup_delay)
             
             status = self.interface.get_pipeline_status()
-            LOGGER.info("\nPipeline Status:")
+            LOGGER.info("Pipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 port = self.config.get_stream_port(stream)
                 LOGGER.info(f"  {stream}: {status_str} (port {port})")
             
             if not all(status.values()):
-                LOGGER.error("\nSome pipelines failed to start!")
+                LOGGER.error("Some pipelines failed to start!")
                 self.stop()
                 return False
             
-            LOGGER.info("\n" + "=" * 60)
+            LOGGER.info("=" * 60)
             LOGGER.info("Streaming started successfully!")
             LOGGER.info("Press Ctrl+C to stop")
             LOGGER.info("=" * 60)
@@ -111,7 +111,7 @@ class StreamingSender:
     def stop(self):
         """Stop all streams"""
         if self.running:
-            LOGGER.info("\nStopping streams...")
+            LOGGER.info("Stopping streams...")
             self.interface.stop_all()
             self.running = False
             LOGGER.info("All streams stopped")
@@ -131,7 +131,7 @@ class StreamingSender:
                     break
                     
         except KeyboardInterrupt:
-            LOGGER.info("\nInterrupted by user")
+            LOGGER.info("Interrupted by user")
         finally:
             self.stop()
 

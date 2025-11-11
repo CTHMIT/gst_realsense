@@ -178,7 +178,7 @@ class GStreamerInterface:
             if stream_type == StreamType.COLOR:
                 return f"v4l2src device={device} ! video/x-raw,format='YUY2 ',width={width},height={height},framerate={fps}/1 ! videoconvert ! video/x-raw,format=RGB"
             elif stream_type == StreamType.DEPTH:
-                return f"v4l2src device={device} ! video/x-raw,format='Z16 ',width={width},height={height},framerate={fps}/1"
+                return f"v4l2src device={device} ! video/x-raw,format='Y16 ',width={width},height={height},framerate={fps}/1"
             else:  # Infrared
                 return f"v4l2src device={device} ! video/x-raw,format='GRAY8 ',width={width},height={height},framerate={fps}/1"
     
