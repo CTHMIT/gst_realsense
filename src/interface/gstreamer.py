@@ -473,12 +473,16 @@ class GStreamerInterface:
         scfg = self._get_stream_config(pipe.stream_type)
         try:
             LOGGER.info(f"Launching {scfg.encoding} pipeline for {pipe.stream_type.value} via PyGObject")
-            self._launch_subprocess_pipeline(pipe)
+            self._launch_pygobject_pipeline(pipe)
         except Exception as e:
             LOGGER.error(f"Failed to launch {pipe.stream_type.value}: {e}")
             raise
 
-    def _launch_subprocess_pipeline(self, pipe: GStreamerPipeline):
+    def _launch_pygobject_pipeline(self, pipe: GStreamerPipeline):
+        """
+        Launches a pipeline within the main GLib context and robustly
+        waits for it to enter the PLAYING state.
+        """
         try:
             gst_pipe = Gst.parse_launch(pipe.pipeline_str)
             pipe.gst_pipeline = gst_pipe
@@ -500,26 +504,33 @@ class GStreamerInterface:
             else:
                 LOGGER.info(f"H.264 pipeline for {pipe.stream_type.value} created.")
 
+            ret = gst_pipe.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to set pipeline to PLAYING (immediate failure)")
+
+            bus = gst_pipe.get_bus()
+            msg = bus.timed_pop_filtered(
+                Gst.SECOND * 5, 
+                Gst.MessageType.ERROR | Gst.MessageType.EOS | Gst.MessageType.ASYNC_DONE
+            )
+            
+            if msg:
+                if msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    raise RuntimeError(f"GStreamer error: {err.message}. Debug: {debug}")
+                if msg.type == Gst.MessageType.EOS:
+                    raise RuntimeError("Pipeline reached End-Of-Stream immediately")
+                if msg.type == Gst.MessageType.ASYNC_DONE:
+                    LOGGER.info(f"Started {scfg.encoding} {pipe.stream_type.value} in GObject (Async Done)")
+            else:
+                _, state, _ = gst_pipe.get_state(Gst.CLOCK_TIME_NONE)
+                if state != Gst.State.PLAYING:
+                    raise RuntimeError(f"Pipeline timed out (5s) trying to reach PLAYING. Current state: {state}")
+                else:
+                    LOGGER.info(f"Started {scfg.encoding} {pipe.stream_type.value} in GObject (Timeout but PLAYING)")
+
             pipe.running = True
             self.pipelines[pipe.stream_type] = pipe
-            gst_pipe.set_state(Gst.State.PLAYING)
-            LOGGER.info(f"Started {scfg.encoding} {pipe.stream_type.value} in GObject")
-
-            time.sleep(0.5) 
-            s, _, _ = gst_pipe.get_state(Gst.CLOCK_TIME_NONE)
-            if s != Gst.State.PLAYING:
-                 time.sleep(1.0) 
-                 bus = gst_pipe.get_bus()
-                 msg = bus.timed_pop_filtered(
-                     Gst.SECOND, Gst.MessageType.ERROR | Gst.MessageType.EOS
-                 )
-                 err_msg = "Pipeline failed to enter PLAYING state"
-                 if msg:
-                     err, debug = msg.parse_error()
-                     err_msg = f"GStreamer error: {err.message}. Debug: {debug}"
-                 
-                 gst_pipe.set_state(Gst.State.NULL)
-                 raise RuntimeError(err_msg)
 
         except Exception as e:
             LOGGER.error(f"Launch PyGObject failed {pipe.stream_type.value}: {e}")
