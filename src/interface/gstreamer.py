@@ -130,9 +130,12 @@ class GStreamerInterface:
         queue = f"queue max-size-buffers={queue_config.max_size_buffers} leaky={queue_config.leaky}"
                 
         if rtp_config.codec == "nvh264enc":
+            # ... (您的 nvh264enc 邏輯) ...
             if stream_type == StreamType.DEPTH:
-                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+                # 16-bit GRAY16_LE -> 8-bit GRAY8 -> NVMM NV12
+                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
             else:
+                # COLOR (RGB) / INFRA (GRAY8) -> NVMM NV12
                 converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
 
             encoder = (
@@ -146,8 +149,12 @@ class GStreamerInterface:
         
         elif rtp_config.codec == "nvv4l2h264enc":  
             if stream_type == StreamType.DEPTH:
-                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+                # 16-bit GRAY16_LE -> 8-bit GRAY8 -> NVMM NV12
+                #  nvvidconv  NVMM 
+                converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
             else:
+                # COLOR (RGB) / INFRA (GRAY8) -> NVMM NV12
+                # nvvidconv RGB/GRAY8 to NV12 
                 converter = "videoconvert ! nvvidconv ! 'video/x-raw(memory:NVMM),format=NV12'"
 
             encoder = (
@@ -159,13 +166,15 @@ class GStreamerInterface:
                 f"! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
         
-        else:  # x264enc
+        else:  # x264enc 
             if stream_type == StreamType.COLOR:
                 converter = "videoconvert ! video/x-raw,format=I420"
             elif stream_type == StreamType.DEPTH:
+                # x264enc GRAY8
                 converter = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
             else:  
-                converter = "videoconvert ! video/x-raw,format=I420" 
+                # INFRA (GRAY8)
+                converter = "videoconvert ! video/x-raw,format=GRAY8" 
 
             encoder = (
                 f"x264enc "
@@ -280,20 +289,14 @@ class GStreamerInterface:
     def _build_decoder(self, stream_type: StreamType, stream_config: StreamConfig) -> str:
         """Build decoder element with proper configuration"""
         queue_config = self.config.streaming.queue
-
+        
         # Queue before decoder
         queue = f"queue max-size-buffers={queue_config.max_size_buffers} leaky={queue_config.leaky}"
-
-        # Decoder selection
-        if self.config.network.server.cuda_available:
-            # Hardware decoding
-            LOGGER.info("CUDA available, but forcing software decoder (avdec_h264) for broad compatibility.")
-            decoder = "avdec_h264"
-        else:
-            # Software decoding
-            LOGGER.info("CUDA not available, using software decoder (avdec_h264).")
-            decoder = "avdec_h264"
-
+        
+    
+        LOGGER.info("Using decodebin to automatically select best decoder (hardware or software).")
+        decoder = "decodebin"
+        
         if stream_type == StreamType.COLOR:
             output_format = f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format}"
         elif stream_type == StreamType.DEPTH:
@@ -301,7 +304,7 @@ class GStreamerInterface:
             LOGGER.warning(f"{stream_type.value}: Depth precision reduced to 8-bit due to H264 encoding")
         else:  # Infrared
             output_format = f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format}"
-
+        
         return f"{queue} ! {decoder} ! {output_format}"
     
     def _build_receiver_sink(
@@ -320,7 +323,7 @@ class GStreamerInterface:
             return "appsink emit-signals=true sync=false"
         else:
             # Display sink for testing
-            return "autovideosink sync=false"
+            return "videoconvert ! xvimagesink sync=false"
     
     # ==================== Pipeline Management ====================
     
