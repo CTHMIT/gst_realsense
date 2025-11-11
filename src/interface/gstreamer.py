@@ -474,70 +474,67 @@ class GStreamerInterface:
 
             self._launch_pipeline(pipeline)
     
-    def _launch_pipeline(self, pipeline: GStreamerPipeline):
+    def _launch_pipeline(self, pipe: GStreamerPipeline):
         """
-        [修改] 
         Launch a GStreamer pipeline.
         Decides whether to use subprocess (H.264) or PyGObject (LZ4).
         """
-        stream_config = self._get_stream_config(pipeline.stream_type)
-        
-        if stream_config.encoding == "lz4":
-            LOGGER.info(f"Launching LZ4 pipeline for {pipeline.stream_type.value}...")
-            self._launch_pygobject_pipeline(pipeline)
-        else:
-            LOGGER.info(f"Launching H.264 pipeline for {pipeline.stream_type.value}...")
-            self._launch_subprocess_pipeline(pipeline)
-
-    def _launch_subprocess_pipeline(self, pipeline: GStreamerPipeline):
-        """Launch an H.264 pipeline using subprocess.Popen"""
-        cmd = f"gst-launch-1.0 -v {pipeline.pipeline_str}" 
-        
+        scfg = self._get_stream_config(pipe.stream_type)
         try:
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
-            )
-            pipeline.process = process
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            LOGGER.info(f"Launched H.264 pipeline for {pipeline.stream_type.value} (PID: {process.pid})")
-            LOGGER.info(f"Launching: {cmd}")
-            
-            time.sleep(1.0) 
-            poll_result = process.poll()
-            if poll_result is not None:
-                stderr = process.stderr.read().decode()
-                raise RuntimeError(f"Pipeline failed to start (code {poll_result}): {stderr}")
-                
+            LOGGER.info(f"Launching {scfg.encoding} pipeline for {pipe.stream_type.value} via PyGObject")
+            self._launch_subprocess_pipeline(pipe)
         except Exception as e:
-            LOGGER.error(f"Failed to launch H.264 pipeline for {pipeline.stream_type.value}: {e}")
+            LOGGER.error(f"Failed to launch {pipe.stream_type.value}: {e}")
             raise
 
-    def _launch_pygobject_pipeline(self, pipeline: GStreamerPipeline):
-        """Launch a PyGObject pipeline (LZ4)"""
+    def _launch_subprocess_pipeline(self, pipe: GStreamerPipeline):
         try:
-            gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            pipeline.gst_pipeline = gst_pipeline
-            
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            pipeline.udp_socket = udp_socket
+            gst_pipe = Gst.parse_launch(pipe.pipeline_str)
+            pipe.gst_pipeline = gst_pipe
+            scfg = self._get_stream_config(pipe.stream_type)
 
-            if "appsrc" in pipeline.pipeline_str:
-                self._setup_lz4_receiver(pipeline)
-            elif "appsink" in pipeline.pipeline_str:
-                self._setup_lz4_sender(pipeline)
-            
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            gst_pipeline.set_state(Gst.State.PLAYING)
-            LOGGER.info(f"Launched LZ4 pipeline for {pipeline.stream_type.value}")
-            
+            if scfg.encoding == "lz4":
+                if "appsrc" in pipe.pipeline_str:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+                    pipe.udp_socket = sock
+                    self._setup_lz4_receiver(pipe)
+                elif "appsink" in pipe.pipeline_str:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+                    pipe.udp_socket = sock
+                    self._setup_lz4_sender(pipe)
+                else:
+                    raise RuntimeError("LZ4 pipeline missing appsrc/appsink")
+            else:
+                LOGGER.info(f"H.264 pipeline for {pipe.stream_type.value} created.")
+
+            pipe.running = True
+            self.pipelines[pipe.stream_type] = pipe
+            gst_pipe.set_state(Gst.State.PLAYING)
+            LOGGER.info(f"Started {scfg.encoding} {pipe.stream_type.value} in GObject")
+
+            time.sleep(0.5) 
+            s, _, _ = gst_pipe.get_state(Gst.CLOCK_TIME_NONE)
+            if s != Gst.State.PLAYING:
+                 time.sleep(1.0) 
+                 bus = gst_pipe.get_bus()
+                 msg = bus.timed_pop_filtered(
+                     Gst.SECOND, Gst.MessageType.ERROR | Gst.MessageType.EOS
+                 )
+                 err_msg = "Pipeline failed to enter PLAYING state"
+                 if msg:
+                     err, debug = msg.parse_error()
+                     err_msg = f"GStreamer error: {err.message}. Debug: {debug}"
+                 
+                 gst_pipe.set_state(Gst.State.NULL)
+                 raise RuntimeError(err_msg)
+
         except Exception as e:
-            LOGGER.error(f"Failed to launch LZ4 pipeline for {pipeline.stream_type.value}: {e}")
+            LOGGER.error(f"Launch PyGObject failed {pipe.stream_type.value}: {e}")
+            if pipe.gst_pipeline:
+                 pipe.gst_pipeline.set_state(Gst.State.NULL)
+            pipe.running = False
             raise
 
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
