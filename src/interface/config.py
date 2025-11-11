@@ -36,11 +36,11 @@ class NetworkConfig(BaseModel):
 
 class StreamConfig(BaseModel):
     """Individual stream configuration"""
-    format: str = Field(..., description="RealSense stream format (e.g., RGB8, Z16, Y8)")
+    camera_format: str = Field(..., description="RealSense stream format (e.g., RGB8, Z16, Y8)")
     encoding: Literal["h264", "h265"] = Field("h264", description="Video encoding codec")
     port: int = Field(..., description="UDP/TCP port for streaming", ge=1024, le=65535)
     gstreamer_format: str = Field(..., description="GStreamer video format")
-    image_encoding: str = Field(..., description="ROS2 image encoding format")
+    ros_fomat: str = Field(..., description="ROS2 image encoding format")
     bitrate: int = Field(8000, description="Encoding bitrate in kbps", ge=1000)
 
 
@@ -140,7 +140,7 @@ class RealSenseCameraConfig(BaseModel):
 
 # ==================== Main Configuration ====================
 
-class D435iStreamingConfig(BaseSettings):
+class StreamingConfigManager(BaseSettings):
     """
     Main configuration class for D435i streaming system
     Automatically loads from config.yaml file
@@ -157,7 +157,7 @@ class D435iStreamingConfig(BaseSettings):
     streaming: StreamingConfig
 
     @classmethod
-    def from_yaml(cls, yaml_path: Union[str, Path] = "src/config/config.yaml") -> "D435iStreamingConfig":
+    def from_yaml(cls, yaml_path: Union[str, Path] = "src/config/config.yaml") -> "StreamingConfigManager":
         """Load configuration from YAML file"""
         import yaml
         
@@ -209,11 +209,10 @@ class D435iStreamingConfig(BaseSettings):
             raise ValueError(f"Unknown stream type: {stream_type}")
 
 
-# ==================== Usage Example ====================
 
 if __name__ == "__main__":
     # Load configuration
-    config = D435iStreamingConfig.from_yaml("config.yaml")
+    config = StreamingConfigManager.from_yaml("config.yaml")
     
     # Access configuration
     LOGGER.info(f"Client IP: {config.network.client.ip}")

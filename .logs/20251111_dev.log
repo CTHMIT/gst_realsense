@@ -1,0 +1,132 @@
+2025-11-11 13:43:39 [ERROR] - sender.py:main - Configuration error: Configuration file not found: config.yaml 
+2025-11-11 13:44:09 [ERROR] - sender.py:main - [/home/cthsu/gst_realsense/.venv/lib/python3.11/site-packages/pydantic/main.py:250] Fatal error: 8 validation errors for StreamingConfigManager
+realsense_camera.d435i.streams.color.format
+  Field required [type=missing, input_value={'camera_format': 'RGB8',...'rgb8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.color.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'RGB8',...'rgb8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.depth.format
+  Field required [type=missing, input_value={'camera_format': 'Z16', ...16UC1', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.depth.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Z16', ...16UC1', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra1.format
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra1.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra2.format
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra2.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing 
+Traceback (most recent call last):
+  File "/home/cthsu/gst_realsense/src/startup/sender.py", line 237, in main
+    sender = StreamingSender(args.config)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cthsu/gst_realsense/src/startup/sender.py", line 26, in __init__
+    self.config = StreamingConfigManager.from_yaml(config_path)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/cthsu/gst_realsense/src/interface/config.py", line 171, in from_yaml
+    return cls(**config_dict)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/cthsu/gst_realsense/.venv/lib/python3.11/site-packages/pydantic_settings/main.py", line 194, in __init__
+    super().__init__(
+  File "/home/cthsu/gst_realsense/.venv/lib/python3.11/site-packages/pydantic/main.py", line 250, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 8 validation errors for StreamingConfigManager
+realsense_camera.d435i.streams.color.format
+  Field required [type=missing, input_value={'camera_format': 'RGB8',...'rgb8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.color.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'RGB8',...'rgb8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.depth.format
+  Field required [type=missing, input_value={'camera_format': 'Z16', ...16UC1', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.depth.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Z16', ...16UC1', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra1.format
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra1.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra2.format
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+realsense_camera.d435i.streams.infra2.image_encoding
+  Field required [type=missing, input_value={'camera_format': 'Y8', '...mono8', 'bitrate': 8000}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+2025-11-11 13:47:07 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:47:07 [INFO] - sender.py:start - Starting RealSense D435i Streaming Sender
+2025-11-11 13:47:07 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:47:07 [INFO] - sender.py:start - Client: 10.28.134.61 (jetson_agx_orin)
+2025-11-11 13:47:07 [INFO] - sender.py:start - Server: 10.28.121.28
+2025-11-11 13:47:07 [INFO] - sender.py:start - Protocol: UDP
+2025-11-11 13:47:07 [INFO] - sender.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 13:47:07 [INFO] - sender.py:start - Codec: x264enc
+2025-11-11 13:47:07 [INFO] - sender.py:start - 
+Using ROS2 topics:
+2025-11-11 13:47:07 [INFO] - sender.py:start -   color: /camera/color/image_raw
+2025-11-11 13:47:07 [INFO] - sender.py:start -   depth: /camera/aligned_depth_to_color/image_raw
+2025-11-11 13:47:07 [INFO] - sender.py:start -   infra1: /camera/infra1/image_rect_raw
+2025-11-11 13:47:07 [INFO] - sender.py:start -   infra2: /camera/infra2/image_rect_raw
+2025-11-11 13:47:07 [INFO] - sender.py:start - 
+Starting 4 stream(s)...
+2025-11-11 13:47:07 [INFO] - gstreamer.py:build_sender_pipeline - Built sender pipeline for color on port 5010
+2025-11-11 13:47:07 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 4182148)
+2025-11-11 13:47:07 [ERROR] - gstreamer.py:_launch_pipeline - Failed to launch pipeline for color: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 
+2025-11-11 13:47:07 [ERROR] - sender.py:start - Failed to start streaming: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 
+2025-11-11 13:50:02 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:50:02 [INFO] - sender.py:start - Starting RealSense D435i Streaming Sender
+2025-11-11 13:50:02 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:50:02 [INFO] - sender.py:start - Client: 10.28.134.61 (jetson_agx_orin)
+2025-11-11 13:50:02 [INFO] - sender.py:start - Server: 10.28.121.28
+2025-11-11 13:50:02 [INFO] - sender.py:start - Protocol: UDP
+2025-11-11 13:50:02 [INFO] - sender.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 13:50:02 [INFO] - sender.py:start - Codec: x264enc
+2025-11-11 13:50:02 [INFO] - sender.py:start - 
+Using ROS2 topics:
+2025-11-11 13:50:02 [INFO] - sender.py:start -   color: /camera/color/image_raw
+2025-11-11 13:50:02 [INFO] - sender.py:start -   depth: /camera/aligned_depth_to_color/image_raw
+2025-11-11 13:50:02 [INFO] - sender.py:start -   infra1: /camera/infra1/image_rect_raw
+2025-11-11 13:50:02 [INFO] - sender.py:start -   infra2: /camera/infra2/image_rect_raw
+2025-11-11 13:50:02 [INFO] - sender.py:start - 
+Starting 4 stream(s)...
+2025-11-11 13:50:02 [INFO] - gstreamer.py:build_sender_pipeline - Built sender pipeline for color on port 5010
+2025-11-11 13:50:02 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 4184870)
+2025-11-11 13:50:02 [ERROR] - gstreamer.py:_launch_pipeline - Failed to launch pipeline for color: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 
+2025-11-11 13:50:02 [ERROR] - sender.py:start - Failed to start streaming: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 
+2025-11-11 13:54:43 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:54:43 [INFO] - sender.py:start - Starting RealSense D435i Streaming Sender
+2025-11-11 13:54:43 [INFO] - sender.py:start - ============================================================
+2025-11-11 13:54:43 [INFO] - sender.py:start - Client: 10.28.134.61 (jetson_agx_orin)
+2025-11-11 13:54:43 [INFO] - sender.py:start - Server: 10.28.121.28
+2025-11-11 13:54:43 [INFO] - sender.py:start - Protocol: UDP
+2025-11-11 13:54:43 [INFO] - sender.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 13:54:43 [INFO] - sender.py:start - Codec: x264enc
+2025-11-11 13:54:43 [INFO] - sender.py:start - 
+Using ROS2 topics:
+2025-11-11 13:54:43 [INFO] - sender.py:start -   color: /camera/color/image_raw
+2025-11-11 13:54:43 [INFO] - sender.py:start -   depth: /camera/aligned_depth_to_color/image_raw
+2025-11-11 13:54:43 [INFO] - sender.py:start -   infra1: /camera/infra1/image_rect_raw
+2025-11-11 13:54:43 [INFO] - sender.py:start -   infra2: /camera/infra2/image_rect_raw
+2025-11-11 13:54:43 [INFO] - sender.py:start - 
+Starting 4 stream(s)...
+2025-11-11 13:54:43 [INFO] - gstreamer.py:build_sender_pipeline - Built sender pipeline for color on port 5010
+2025-11-11 13:54:43 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 4188897)
+2025-11-11 13:54:43 [ERROR] - gstreamer.py:_launch_pipeline - Failed to launch pipeline for color: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 
+2025-11-11 13:54:43 [ERROR] - sender.py:start - Failed to start streaming: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
+ 

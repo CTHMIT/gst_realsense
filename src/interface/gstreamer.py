@@ -291,7 +291,7 @@ class GStreamerInterface:
         if topic:
             # ROS2 sink
             stream_config = self._get_stream_config(stream_type)
-            return f"ros2sink topic={topic} encoding={stream_config.image_encoding}"
+            return f"ros2sink topic={topic} encoding={stream_config.ros_fomat}"
         elif callback:
             # App sink for custom processing
             return "appsink emit-signals=true sync=false"
@@ -442,9 +442,6 @@ class GStreamerInterface:
             else:
                 status[stream_type.value] = False
         return status
-
-
-# ==================== Convenience Functions ====================
 
 def create_sender_interface(config_path: str = "config.yaml") -> GStreamerInterface:
     """Create GStreamer interface for sender (client)"""

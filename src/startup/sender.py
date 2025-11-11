@@ -10,6 +10,7 @@ import argparse
 import time
 from pathlib import Path
 from typing import List, Optional
+import logging
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -160,8 +161,8 @@ Examples:
     parser.add_argument(
         "--config",
         type=str,
-        default="config.yaml",
-        help="Path to config.yaml (default: config.yaml)"
+        default="src/config/config.yaml",
+        help="Path to config.yaml (default: src/config/config.yaml)"
     )
     
     # Stream selection
