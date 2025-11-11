@@ -205,7 +205,10 @@ class GStreamerInterface:
             else:
                 raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
-            source_element = f"v4l2src device={device} ! video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
+            source_element = (
+                f"v4l2src device={device} io-mode=0 ! "
+                f"video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
+            )
             
             return source_element
     
@@ -480,6 +483,7 @@ class GStreamerInterface:
             "deinterleave name=d"
         )
         
+        # 2. Infra1 Branch (從 d.src_0 輸出)
         scfg1 = self._get_stream_config(StreamType.INFRA1)
         port1 = self._get_port(StreamType.INFRA1)
         pay1 = self._build_payloader(StreamType.INFRA1)
@@ -492,6 +496,7 @@ class GStreamerInterface:
             f"{enc1} ! {pay1} ! {sink1}"
         )
 
+        # 3. Infra2 Branch (從 d.src_1 輸出)
         scfg2 = self._get_stream_config(StreamType.INFRA2)
         port2 = self._get_port(StreamType.INFRA2)
         pay2 = self._build_payloader(StreamType.INFRA2)
@@ -514,15 +519,20 @@ class GStreamerInterface:
         source_topics: Optional[Dict[StreamType, str]] = None,
         source_devices: Optional[Dict[StreamType, str]] = None,
         auto_detect: bool = True
-    ):
+    ) -> bool: 
         """
         Start sender pipelines for specified streams.
         Attempts to use Y8I interleaved mode if infra1 and infra2 are requested.
+        
+        Returns:
+            bool: True if all requested pipelines started successfully, False otherwise.
         """
         source_topics = source_topics or {}
         source_devices = source_devices or {}
         
         allocated_devices: List[str] = [] 
+        all_success = True 
+        launched_at_least_one = False 
         
         if (StreamType.INFRA1 in stream_types and 
             StreamType.INFRA2 in stream_types and
@@ -542,21 +552,27 @@ class GStreamerInterface:
                     
                     pipeline_obj = GStreamerPipeline(
                         pipeline_str=pipeline_str,
-                        stream_type=StreamType.INFRA1,
+                        stream_type=StreamType.INFRA1, 
                         port=self.config.get_stream_port("infra1")
                     )
                     
                     self._launch_pipeline(pipeline_obj)
+                    
                     stream_types.remove(StreamType.INFRA1)
                     stream_types.remove(StreamType.INFRA2)
                     LOGGER.info("Successfully launched interleaved Y8I pipeline for INFRA1 & INFRA2.")
+                    launched_at_least_one = True
                     
                 else:
                     LOGGER.warning("No Y8I device found. Falling back to individual GRAY8 (will likely fail).")
+                    all_success = False 
                     
             except Exception as e:
                 LOGGER.error(f"Failed to launch interleaved Y8I pipeline: {e}")
-
+                all_success = False 
+                if StreamType.INFRA1 in stream_types: stream_types.remove(StreamType.INFRA1)
+                if StreamType.INFRA2 in stream_types: stream_types.remove(StreamType.INFRA2)
+        
         for stream_type in stream_types:
             topic = source_topics.get(stream_type)
             device = source_devices.get(stream_type)
@@ -572,18 +588,24 @@ class GStreamerInterface:
                     allocated_devices.append(device)
                 else:
                     LOGGER.warning(f"No device detected for {stream_type.value}, skipping this stream.")
+                    all_success = False 
                     continue 
             
             elif not device and not topic:
                  LOGGER.warning(f"No device or topic specified for {stream_type.value}, skipping this stream.")
+                 all_success = False 
                  continue
 
             pipeline = self.build_sender_pipeline(stream_type, device, topic)
             
             try:
                 self._launch_pipeline(pipeline)
+                launched_at_least_one = True
             except Exception as e:
                 LOGGER.error(f"Failed to launch pipeline for {stream_type.value}: {e}")
+                all_success = False 
+        
+        return all_success and launched_at_least_one
 
     def start_receiver(
         self,

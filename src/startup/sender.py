@@ -59,6 +59,7 @@ class StreamingSender:
         LOGGER.info(f"Resolution: {self.config.realsense_camera.resolution} @ {self.config.realsense_camera.fps} fps")
         LOGGER.info(f"Codec: {self.config.streaming.rtp.codec}")
         
+       
         # Determine source
         topics = {}
         if source_topics:
@@ -75,7 +76,7 @@ class StreamingSender:
         # Start streams
         LOGGER.info(f"Starting {len(stream_types)} stream(s)...")
         try:
-            self.interface.start_sender(
+            all_launched_ok = self.interface.start_sender(
                 stream_types, 
                 topics if topics else None,
                 auto_detect=auto_detect
@@ -91,7 +92,7 @@ class StreamingSender:
                 port = self.config.get_stream_port(stream)
                 LOGGER.info(f"  {stream}: {status_str} (port {port})")
             
-            if not all(status.values()):
+            if not all_launched_ok or not all(status.values()):
                 LOGGER.error("Some pipelines failed to start!")
                 self.stop()
                 return False
