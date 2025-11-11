@@ -180,6 +180,11 @@ Examples:
     topic_group.add_argument("--infra2-topic", type=str, help="Infrared 2 ROS2 topic")
     
     parser.add_argument(
+        "--auto-detect",
+        default=True,
+        help="Auto detect realsense device"
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging"
@@ -230,7 +235,7 @@ def main():
         success = sender.start(
             stream_types, 
             source_topics, 
-            auto_detect=not args.no_auto_detect
+            auto_detect=args.auto_detect,
         )
         
         if success:
