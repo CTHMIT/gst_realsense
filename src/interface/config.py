@@ -55,8 +55,8 @@ class D435iStreams(BaseModel):
     """D435i camera streams configuration"""
     color: StreamConfig
     depth: StreamConfig
-    infra1: StreamConfig  # 修正: 分離 infra1
-    infra2: StreamConfig  # 修正: 分離 infra2
+    infra1: StreamConfig  
+    infra2: StreamConfig  
     
 
 class D435iConfig(BaseModel):
@@ -76,11 +76,11 @@ class UDPConfig(BaseModel):
 
 class RTPConfig(BaseModel):
     """RTP streaming configuration"""
-    codec: Literal["x264enc", "nvh264enc", "x265enc"] = Field("x264enc", description="Video codec")
+    codec: Literal["x264enc", "nvh264enc", "x265enc", "nvv4l2h264enc"] = Field("nvv4l2h264enc", description="Video codec")
     tune: str = Field("zerolatency", description="Encoder tuning preset")
     speed: str = Field("ultrafast", description="Encoding speed preset")
     bitrate: int = Field(8000, description="Encoding bitrate in kbps", ge=1000)
-    mtu: int = Field(1400, description="RTP MTU size", ge=576, le=65535)  # 修正: 預設改為 1400
+    mtu: int = Field(1400, description="RTP MTU size", ge=576, le=65535)  
     config_interval: int = Field(1, description="Config interval for keyframes", ge=-1)
     payload_types: dict[str, int] = Field(
         default_factory=lambda: {"depth": 96, "color": 98, "infra1": 97, "infra2": 99},
@@ -90,13 +90,13 @@ class RTPConfig(BaseModel):
 
 class JitterBufferConfig(BaseModel):
     """Jitter buffer configuration for network stability"""
-    latency: int = Field(100, description="Jitter buffer latency in ms", ge=0, le=2000)  # 修正: 從 50 改為 100
-    drop_on_latency: bool = Field(True, description="Drop packets on latency")  # 修正: 改為 True
+    latency: int = Field(100, description="Jitter buffer latency in ms", ge=0, le=2000)  
+    drop_on_latency: bool = Field(True, description="Drop packets on latency")  
 
 
 class QueueConfig(BaseModel):
     """GStreamer queue configuration"""
-    max_size_buffers: int = Field(10, description="Maximum queue buffer size", ge=0)  # 修正: 從 4 改為 10
+    max_size_buffers: int = Field(10, description="Maximum queue buffer size", ge=0)  
     leaky: Literal["downstream", "upstream", "no"] = Field("downstream", description="Queue leaky mode")
 
 
