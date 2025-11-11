@@ -130,3 +130,145 @@ Starting 4 stream(s)...
  
 2025-11-11 13:54:43 [ERROR] - sender.py:start - Failed to start streaming: Pipeline failed to start: 警告：pipeline錯誤：“ros2src” element不存在
  
+2025-11-11 14:51:42 [ERROR] - receiver.py:main - Configuration error: Configuration file not found: config.yaml 
+2025-11-11 14:52:02 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 14:52:02 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 14:52:02 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 14:52:02 [INFO] - receiver.py:start - 
+Displaying streams on screen (autovideosink)
+2025-11-11 14:52:02 [INFO] - receiver.py:start - 
+Starting 1 stream(s)...
+2025-11-11 14:52:02 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 14:52:02 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 43508)
+2025-11-11 14:52:05 [INFO] - receiver.py:start - 
+Pipeline Status:
+2025-11-11 14:52:05 [INFO] - receiver.py:start -   color: ✗ Failed (port 5010)
+2025-11-11 14:52:05 [ERROR] - receiver.py:start - 
+Some pipelines failed to start! 
+2025-11-11 14:52:05 [INFO] - receiver.py:stop - 
+Stopping streams...
+2025-11-11 14:52:05 [INFO] - gstreamer.py:stop_pipeline - Stopped pipeline for color
+2025-11-11 14:52:05 [INFO] - receiver.py:stop - All streams stopped
+2025-11-11 14:52:22 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 14:52:22 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 14:52:22 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 14:52:22 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 14:52:22 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 43773)
+2025-11-11 14:52:25 [INFO] - receiver.py:start - Pipeline Status:
+2025-11-11 14:52:25 [INFO] - receiver.py:start -   color: ✗ Failed (port 5010)
+2025-11-11 14:52:25 [ERROR] - receiver.py:start - Some pipelines failed to start! 
+2025-11-11 14:52:25 [INFO] - receiver.py:stop - Stopping streams...
+2025-11-11 14:52:25 [INFO] - gstreamer.py:stop_pipeline - Stopped pipeline for color
+2025-11-11 14:52:25 [INFO] - receiver.py:stop - All streams stopped
+2025-11-11 14:54:21 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 14:54:21 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 14:54:21 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 14:54:21 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 14:54:21 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 45394)
+2025-11-11 14:54:23 [INFO] - receiver.py:start - Pipeline Status:
+2025-11-11 14:54:23 [INFO] - receiver.py:start -   color: ✗ Failed (port 5010)
+2025-11-11 14:54:23 [ERROR] - receiver.py:start - Some pipelines failed to start! 
+2025-11-11 14:54:23 [INFO] - receiver.py:stop - Stopping streams...
+2025-11-11 14:54:23 [INFO] - gstreamer.py:stop_pipeline - Stopped pipeline for color
+2025-11-11 14:54:23 [INFO] - receiver.py:stop - All streams stopped
+2025-11-11 14:54:36 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 14:54:36 [INFO] - receiver.py:start - ============================================================
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 14:54:36 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 14:54:36 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 14:54:36 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 45634)
+2025-11-11 14:54:39 [INFO] - receiver.py:start - Pipeline Status:
+2025-11-11 14:54:39 [INFO] - receiver.py:start -   color: ✗ Failed (port 5010)
+2025-11-11 14:54:39 [ERROR] - receiver.py:start - Some pipelines failed to start! 
+2025-11-11 14:54:39 [INFO] - receiver.py:stop - Stopping streams...
+2025-11-11 14:54:39 [INFO] - gstreamer.py:stop_pipeline - Stopped pipeline for color
+2025-11-11 14:54:39 [INFO] - receiver.py:stop - All streams stopped
+2025-11-11 15:04:41 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 15:04:41 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 15:04:41 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 15:04:41 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 15:04:41 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 53722)
+2025-11-11 15:04:42 [ERROR] - gstreamer.py:_launch_pipeline - Failed to launch pipeline for color: Pipeline failed to start: 錯誤：來自 /GstPipeline:pipeline0/GstUDPSrc:udpsrc0 element：Internal data stream error.
+額外偵錯資訊：
+../libs/gst/base/gstbasesrc.c(3127): gst_base_src_loop (): /GstPipeline:pipeline0/GstUDPSrc:udpsrc0:
+streaming stopped, reason not-negotiated (-4)
+ 
+2025-11-11 15:04:42 [ERROR] - receiver.py:start - Failed to start receiving: Pipeline failed to start: 錯誤：來自 /GstPipeline:pipeline0/GstUDPSrc:udpsrc0 element：Internal data stream error.
+額外偵錯資訊：
+../libs/gst/base/gstbasesrc.c(3127): gst_base_src_loop (): /GstPipeline:pipeline0/GstUDPSrc:udpsrc0:
+streaming stopped, reason not-negotiated (-4)
+ 
+2025-11-11 15:06:00 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 15:06:00 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 15:06:00 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 15:06:00 [WARNING] - gstreamer.py:_build_decoder - CUDA available, but forcing software decoder (avdec_h264) for broad compatibility.
+2025-11-11 15:06:00 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 15:06:00 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 54879)
+2025-11-11 15:06:02 [INFO] - receiver.py:start - Pipeline Status:
+2025-11-11 15:06:02 [INFO] - receiver.py:start -   color: ✗ Failed (port 5010)
+2025-11-11 15:06:02 [ERROR] - receiver.py:start - Some pipelines failed to start! 
+2025-11-11 15:06:02 [INFO] - receiver.py:stop - Stopping streams...
+2025-11-11 15:06:02 [INFO] - gstreamer.py:stop_pipeline - Stopped pipeline for color
+2025-11-11 15:06:02 [INFO] - receiver.py:stop - All streams stopped
+2025-11-11 15:07:31 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Starting RealSense D435i Streaming Receiver
+2025-11-11 15:07:31 [INFO] - receiver.py:start - ============================================================
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Server: 10.28.121.28 (x86_64)
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Client: 10.28.134.61
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Protocol: UDP
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Resolution: 640x480 @ 30 fps
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Decoder: nvh264dec (Hardware)
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Displaying streams on screen (autovideosink)
+2025-11-11 15:07:31 [INFO] - receiver.py:start - Starting 1 stream(s)...
+2025-11-11 15:07:31 [INFO] - gstreamer.py:_build_decoder - CUDA available, but forcing software decoder (avdec_h264) for broad compatibility.
+2025-11-11 15:07:31 [INFO] - gstreamer.py:build_receiver_pipeline - Built receiver pipeline for color on port 5010
+2025-11-11 15:07:31 [INFO] - gstreamer.py:_launch_pipeline - Launched pipeline for color (PID: 56191)
+2025-11-11 15:07:32 [ERROR] - gstreamer.py:_launch_pipeline - Failed to launch pipeline for color: Pipeline failed to start: 錯誤：來自 /GstPipeline:pipeline0/GstUDPSrc:udpsrc0 element：Internal data stream error.
+額外偵錯資訊：
+../libs/gst/base/gstbasesrc.c(3127): gst_base_src_loop (): /GstPipeline:pipeline0/GstUDPSrc:udpsrc0:
+streaming stopped, reason not-negotiated (-4)
+ 
+2025-11-11 15:07:32 [ERROR] - receiver.py:start - Failed to start receiving: Pipeline failed to start: 錯誤：來自 /GstPipeline:pipeline0/GstUDPSrc:udpsrc0 element：Internal data stream error.
+額外偵錯資訊：
+../libs/gst/base/gstbasesrc.c(3127): gst_base_src_loop (): /GstPipeline:pipeline0/GstUDPSrc:udpsrc0:
+streaming stopped, reason not-negotiated (-4)
+ 

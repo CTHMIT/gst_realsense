@@ -280,18 +280,20 @@ class GStreamerInterface:
     def _build_decoder(self, stream_type: StreamType, stream_config: StreamConfig) -> str:
         """Build decoder element with proper configuration"""
         queue_config = self.config.streaming.queue
-        
+
         # Queue before decoder
         queue = f"queue max-size-buffers={queue_config.max_size_buffers} leaky={queue_config.leaky}"
-        
+
         # Decoder selection
         if self.config.network.server.cuda_available:
             # Hardware decoding
-            decoder = "nvh264dec"
+            LOGGER.info("CUDA available, but forcing software decoder (avdec_h264) for broad compatibility.")
+            decoder = "avdec_h264"
         else:
             # Software decoding
+            LOGGER.info("CUDA not available, using software decoder (avdec_h264).")
             decoder = "avdec_h264"
-        
+
         if stream_type == StreamType.COLOR:
             output_format = f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format}"
         elif stream_type == StreamType.DEPTH:
@@ -299,7 +301,7 @@ class GStreamerInterface:
             LOGGER.warning(f"{stream_type.value}: Depth precision reduced to 8-bit due to H264 encoding")
         else:  # Infrared
             output_format = f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format}"
-        
+
         return f"{queue} ! {decoder} ! {output_format}"
     
     def _build_receiver_sink(

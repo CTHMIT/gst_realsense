@@ -70,16 +70,16 @@ class StreamingReceiver:
         topics = {}
         if output_topics and not display:
             topics = output_topics
-            LOGGER.info("\nPublishing to ROS2 topics:")
+            LOGGER.info("Publishing to ROS2 topics:")
             for stream_type in stream_types:
                 topic = topics.get(stream_type)
                 if topic:
                     LOGGER.info(f"  {stream_type.value}: {topic}")
         else:
-            LOGGER.info("\nDisplaying streams on screen (autovideosink)")
+            LOGGER.info("Displaying streams on screen (autovideosink)")
         
         # Start streams
-        LOGGER.info(f"\nStarting {len(stream_types)} stream(s)...")
+        LOGGER.info(f"Starting {len(stream_types)} stream(s)...")
         try:
             self.interface.start_receiver(stream_types, topics if topics else None)
             self.running = True
@@ -89,7 +89,7 @@ class StreamingReceiver:
             
             # Check status
             status = self.interface.get_pipeline_status()
-            LOGGER.info("\nPipeline Status:")
+            LOGGER.info("Pipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 port = self.config.get_stream_port(stream)
@@ -97,11 +97,11 @@ class StreamingReceiver:
             
             # Check if any failed
             if not all(status.values()):
-                LOGGER.error("\nSome pipelines failed to start!")
+                LOGGER.error("Some pipelines failed to start!")
                 self.stop()
                 return False
             
-            LOGGER.info("\n" + "=" * 60)
+            LOGGER.info("" + "=" * 60)
             LOGGER.info("Receiving started successfully!")
             LOGGER.info("Press Ctrl+C to stop")
             LOGGER.info("=" * 60)
@@ -116,7 +116,7 @@ class StreamingReceiver:
     def stop(self):
         """Stop all streams"""
         if self.running:
-            LOGGER.info("\nStopping streams...")
+            LOGGER.info("Stopping streams...")
             self.interface.stop_all()
             self.running = False
             LOGGER.info("All streams stopped")
@@ -137,7 +137,7 @@ class StreamingReceiver:
                     break
                     
         except KeyboardInterrupt:
-            LOGGER.info("\nInterrupted by user")
+            LOGGER.info("Interrupted by user")
         finally:
             self.stop()
 
@@ -165,7 +165,7 @@ Examples:
     parser.add_argument(
         "--config",
         type=str,
-        default="config.yaml",
+        default="src/config/config.yaml",
         help="Path to config.yaml (default: config.yaml)"
     )
     
