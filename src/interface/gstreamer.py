@@ -151,7 +151,7 @@ class GStreamerInterface:
                 f"bitrate={stream_config.bitrate * 1000} " 
                 f"control-rate=1 "  # 1=VBR, 2=CBR 
                 f"preset-level=2 "  # 2=LowLatencyHQ
-                f"gop-size={self.config.realsense_camera.fps * 2} "
+                f"iframeinterval={self.config.realsense_camera.fps * 2} "
                 f"! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
         else:  # x264enc
