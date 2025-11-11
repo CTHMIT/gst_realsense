@@ -1,0 +1,91 @@
+network:
+  client: 
+    ip: "10.28.134.61"
+    type: "jetson_agx_orin"  
+    nvenc_available: true
+
+  server:
+    ip: "10.28.121.28"  
+    type: "x86_64"
+    cuda_available: true
+
+  transport:
+    protocol: "udp"
+    mtu: 1500 
+
+realsense_camera:
+  resolution: "640x480"  
+  fps: 30
+  color: true
+  depth: true
+  infra: true
+
+  d435i:
+    streams:
+      color:
+        camera_format: "RGB8"  
+        encoding: "h264"
+        port: 5010
+        gstreamer_format: "RGB"
+        ros_fomat: "rgb8"
+        bitrate: 8000
+
+      depth:
+        camera_format: "Z16"
+        encoding: "h264"
+        port: 5020        
+        gstreamer_format: "GRAY16_LE"
+        ros_fomat: "16UC1"
+        bitrate: 8000
+
+      infra1:  
+        camera_format: "Y8"
+        encoding: "h264"
+        port: 5030
+        gstreamer_format: "GRAY8"
+        ros_fomat: "mono8"
+        bitrate: 8000
+
+      infra2:  
+        camera_format: "Y8"
+        encoding: "h264"
+        port: 5040
+        gstreamer_format: "GRAY8"
+        ros_fomat: "mono8"
+        bitrate: 8000
+
+    imu:
+      enabled: true
+      publish_rate: 200.0
+      udp: 5050
+
+streaming:
+  startup_delay: 2
+  udp:
+    sync: false
+    async: false
+    buffer_size: 60000000  
+  rtp:
+    codec: "x264enc" 
+    tune: "zerolatency"
+    speed: "ultrafast"
+    bitrate: 8000
+    mtu: 1400  
+    config_interval: 1
+    payload_types:
+      depth: 96
+      color: 98
+      infra1: 97
+      infra2: 99
+
+  jitter_buffer:
+    latency: 100  
+    drop_on_latency: true
+
+  queue:
+    max_size_buffers: 10  
+    leaky: "downstream"
+
+  processing:
+    max_threads: 8
+    n_threads: 4
