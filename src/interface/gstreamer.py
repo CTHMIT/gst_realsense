@@ -173,23 +173,14 @@ class GStreamerInterface:
             caps = f"video/x-raw,format={stream_config.gstreamer_format},width={width},height={height},framerate={fps}/1"
             return f"ros2src topic={topic} ! {caps}"
         
-        elif device:
+        else:
             # v4l2 device source
             if stream_type == StreamType.COLOR:
-                return f"v4l2src device={device} ! video/x-raw,format=YUY2,width={width},height={height},framerate={fps}/1 ! videoconvert ! video/x-raw,format=RGB"
+                return f"v4l2src device={device} ! video/x-raw,format='YUY2 ',width={width},height={height},framerate={fps}/1 ! videoconvert ! video/x-raw,format=RGB"
             elif stream_type == StreamType.DEPTH:
-                return f"v4l2src device={device} ! video/x-raw,format=Z16,width={width},height={height},framerate={fps}/1"
+                return f"v4l2src device={device} ! video/x-raw,format='Z16 ',width={width},height={height},framerate={fps}/1"
             else:  # Infrared
-                return f"v4l2src device={device} ! video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
-        
-        else:
-            # Test source
-            if stream_type == StreamType.COLOR:
-                return f"videotestsrc pattern=smpte ! video/x-raw,format=RGB,width={width},height={height},framerate={fps}/1"
-            elif stream_type == StreamType.DEPTH:
-                return f"videotestsrc pattern=snow ! video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
-            else:  # Infrared
-                return f"videotestsrc pattern=snow ! video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+                return f"v4l2src device={device} ! video/x-raw,format='GRAY8 ',width={width},height={height},framerate={fps}/1"
     
     def _build_encoder(self, stream_type: StreamType, stream_config: StreamConfig) -> str:
         """Build encoder element with proper configuration"""
