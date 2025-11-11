@@ -203,7 +203,7 @@ def main():
     # Determine streams
     stream_types = []
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2]
+        stream_types = [StreamType.COLOR, StreamType.INFRA1, StreamType.INFRA2, StreamType.DEPTH]
     else:
         if args.color:
             stream_types.append(StreamType.COLOR)
