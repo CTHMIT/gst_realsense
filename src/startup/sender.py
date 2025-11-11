@@ -39,7 +39,6 @@ class StreamingSender:
         self,
         stream_types: List[StreamType],
         source_topics: Optional[dict] = None,
-        use_test_source: bool = False,
         auto_detect: bool = True
     ):
         """
@@ -48,7 +47,6 @@ class StreamingSender:
         Args:
             stream_types: List of streams to send
             source_topics: ROS2 topics for camera data
-            use_test_source: Force use of test sources
             auto_detect: Auto-detect RealSense devices
         """
         LOGGER.info("=" * 60)
@@ -80,7 +78,7 @@ class StreamingSender:
             self.interface.start_sender(
                 stream_types, 
                 topics if topics else None,
-                auto_detect=auto_detect and not use_test_source
+                auto_detect=auto_detect
             )
             self.running = True
             
@@ -232,7 +230,6 @@ def main():
         success = sender.start(
             stream_types, 
             source_topics, 
-            args.test,
             auto_detect=not args.no_auto_detect
         )
         
