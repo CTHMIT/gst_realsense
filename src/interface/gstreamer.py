@@ -826,9 +826,21 @@ class GStreamerInterface:
     def _get_decoder_element(self) -> str:
         """Get the appropriate H.264 decoder element based on config"""
         if self.config.network.server.cuda_available:
-            # You could add a gst-inspect check here, but trusting config is simpler
-            LOGGER.debug("Using hardware decoder: nvv4l2h264dec")
-            return "nvv4l2h264dec"
+            possible_decoders = ["nvcudah264dec", "nvh264dec"]
+            
+            for decoder in possible_decoders:
+                if Gst.ElementFactory.find(decoder):
+                    LOGGER.debug(f"Using hardware decoder: {decoder}")
+                    return decoder
+            
+            LOGGER.warning(
+                f"config.server.cuda_available is True, but no NVIDIA "
+                f"decoder ({', '.join(possible_decoders)}) was found. "
+                "Falling back to software decoder 'avdec_h264'."
+            )
+            LOGGER.warning("Please ensure 'gstreamer1.0-plugins-bad' or NVIDIA drivers are correctly installed.")
+            return "avdec_h264"
+            
         else:
             LOGGER.debug("Using software decoder: avdec_h264")
             return "avdec_h264"
@@ -921,16 +933,25 @@ class GStreamerInterface:
         payload_types = self.config.streaming.rtp.payload_types
         
         type_map = {
-            StreamType.COLOR: "color_h264",
-            StreamType.DEPTH: "depth_h264",
-            StreamType.DEPTH_HIGH: "depth_high_h264",
-            StreamType.DEPTH_LOW: "depth_low_h264",
-            StreamType.INFRA_LEFT: "infra_left_h264",
-            StreamType.INFRA_RIGHT: "infra_right_h264"
+            StreamType.COLOR: "color",
+            StreamType.DEPTH: "depth",
+            StreamType.DEPTH_HIGH: "depth_high",
+            StreamType.DEPTH_LOW: "depth_low",
+            StreamType.INFRA_LEFT: "infra1",
+            StreamType.INFRA_RIGHT: "infra2"
         }
         
-        key = type_map.get(stream_type, "color_h264")
-        return payload_types.get(key, 96)
+        key = type_map.get(stream_type)
+        
+        if key and key in payload_types:
+            return payload_types[key]
+        
+        if stream_type.value in payload_types:
+             return payload_types[stream_type.value]
+
+        LOGGER.warning(f"Payload type for {stream_type.value} (key: {key}) not found in config. "
+                       f"Using default 96.")
+        return 96
     
     # ==================== Launch Methods ====================
     

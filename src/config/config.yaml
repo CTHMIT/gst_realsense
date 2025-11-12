@@ -65,6 +65,7 @@ streaming:
     sync: false
     async: false
     buffer_size: 60000000  
+
   rtp:
     codec: "nvv4l2h264enc" 
     tune: "zerolatency"
@@ -73,10 +74,12 @@ streaming:
     mtu: 1400  
     config_interval: 1
     payload_types:
-      depth: 96
-      color: 98
-      infra1: 97
-      infra2: 99
+      color: 96
+      depth: 97
+      depth_high: 98
+      depth_low: 99
+      infra1: 100
+      infra2: 101
 
   jitter_buffer:
     latency: 100  
