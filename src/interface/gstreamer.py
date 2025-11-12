@@ -482,13 +482,6 @@ class GStreamerInterface:
             f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
             f"appsink name=sink emit-signals=true sync=false"
         )
-        
-        base_pipeline = (
-            f"fdsrc name=src ! "
-            f"queue max-size-buffers=2 ! "
-            f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
-            f"appsink name=sink emit-signals=true sync=false"
-        )
     
         ir_caps_str = (
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
@@ -716,7 +709,7 @@ class GStreamerInterface:
             f"rtph264depay ! "
             f"h264parse ! "
             f"{decoder_element} ! "
-            f"nvvidconv ! "
+            f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
         )
