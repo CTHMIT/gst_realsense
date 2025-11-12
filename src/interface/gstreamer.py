@@ -360,7 +360,6 @@ class GStreamerInterface:
         
         # High byte pipeline (will be fed via appsrc after split)
         high_pipeline_str = (
-            # 將 caps 直接設定在 appsrc 上，並移除舊的 capsfilter
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
@@ -369,7 +368,6 @@ class GStreamerInterface:
         
         # Low byte pipeline (will be fed via appsrc after split)
         low_pipeline_str = (
-            # 將 caps 直接設定在 appsrc 上，並移除舊的 capsfilter
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
@@ -455,6 +453,10 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
         
+        ir_caps_str = (
+            f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
+        )
+
         # Get stream configs
         left_config = self._get_stream_config(StreamType.INFRA_LEFT)
         right_config = self._get_stream_config(StreamType.INFRA_RIGHT)
@@ -465,8 +467,7 @@ class GStreamerInterface:
         
         # Left IR pipeline (fed via appsrc after split)
         left_pipeline_str = (
-            f"appsrc name=src format=time is-live=true ! "
-            f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
+            f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
             f"{encoder_left}"
@@ -474,8 +475,7 @@ class GStreamerInterface:
         
         # Right IR pipeline (fed via appsrc after split)
         right_pipeline_str = (
-            f"appsrc name=src format=time is-live=true ! "
-            f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
+            f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
             f"{encoder_right}"
