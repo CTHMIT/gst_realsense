@@ -354,7 +354,13 @@ class GStreamerInterface:
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
         )
         
-        # nvvidconv 
+        # videoconvert CPU 
+        cpu_nv12_caps_str = (
+            f"video/x-raw,format=NV12,"
+            f"width={width},height={height},framerate={fps}/1"
+        )
+
+        # nvvidconv NVIDIA
         nvmm_caps_str = (
             f"video/x-raw(memory:NVMM),format=NV12,"
             f"width={width},height={height},framerate={fps}/1"
@@ -364,21 +370,25 @@ class GStreamerInterface:
         encoder_high = self._build_encoder(StreamType.DEPTH_HIGH, depth_config)
         encoder_low = self._build_encoder(StreamType.DEPTH_LOW, depth_config)
         
-        # High byte pipeline (will be fed via appsrc after split)
+        # High byte pipeline
         high_pipeline_str = (
-            f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
+            f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "  
             f"queue max-size-buffers=2 ! "
-            f"nvvidconv ! "
-            f"{nvmm_caps_str} ! "  
+            f"videoconvert ! "                                                 
+            f"{cpu_nv12_caps_str} ! "                                          
+            f"nvvidconv ! "                                                    
+            f"{nvmm_caps_str} ! "                                              
             f"{encoder_high}"
         )
         
-        # Low byte pipeline (will be fed via appsrc after split)
+        # Low byte pipeline
         low_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
+            f"{cpu_nv12_caps_str} ! "
             f"nvvidconv ! "
-            f"{nvmm_caps_str} ! "  
+            f"{nvmm_caps_str} ! "
             f"{encoder_low}"
         )
         
@@ -397,7 +407,6 @@ class GStreamerInterface:
             pt=pt_l,
         )
         
-        # Link them for coordinated processing
         high_pipeline.paired_pipeline = low_pipeline
         low_pipeline.paired_pipeline = high_pipeline
         
