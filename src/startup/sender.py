@@ -90,7 +90,7 @@ class StreamingSender:
                 LOGGER.info(f"Y8I split mode: {y8i_split_mode}")
         
         # Start streams
-        LOGGER.info(f"\nStarting streams...")
+        LOGGER.info(f"Starting streams...")
         try:
             started_count = 0
             
@@ -142,7 +142,7 @@ class StreamingSender:
             
             # Check status
             status = self.interface.get_pipeline_status()
-            LOGGER.info("\nPipeline Status:")
+            LOGGER.info("Pipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 try:
@@ -325,7 +325,7 @@ class StreamingSender:
                     break
                     
         except KeyboardInterrupt:
-            LOGGER.info("\nInterrupted by user")
+            LOGGER.info("Interrupted by user")
         finally:
             self.stop()
 

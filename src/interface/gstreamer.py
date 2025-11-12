@@ -1109,9 +1109,12 @@ class GStreamerInterface:
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
-                LOGGER.warning(f"Failed to set SENDER pipeline {pipeline.stream_type.value} to PLAYING immediately.")
+                if pipeline.paired_pipeline:
+                    LOGGER.warning(f"Paired sender pipeline {pipeline.stream_type.value} failed to set to PLAYING. Waiting for partner data push.")
+                else:
+                    raise RuntimeError("Failed to set pipeline to PLAYING")
             
-            LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline. Waiting for data.")
+            LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline.")
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
             
@@ -1569,10 +1572,20 @@ class GStreamerInterface:
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
             pipeline.running = False 
             
-            # Also stop paired pipeline if exists
             if pipeline.paired_pipeline and pipeline.paired_pipeline.stream_type in self.pipelines:
                 paired = pipeline.paired_pipeline
                 paired.running = False
+                
+                is_primary = pipeline.v4l2_cmd is not None
+                is_paired_primary = paired.v4l2_cmd is not None
+
+                if is_primary and not is_paired_primary:
+                    paired.v4l2_process = None
+                    paired.capture_gst_pipeline = None
+                elif not is_primary and is_paired_primary:
+                    pipeline.v4l2_process = None
+                    pipeline.capture_gst_pipeline = None
+
                 self._cleanup_pipeline(paired)
                 if paired.stream_type in self.pipelines:
                     del self.pipelines[paired.stream_type]
