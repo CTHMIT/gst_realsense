@@ -814,7 +814,7 @@ class GStreamerInterface:
         stream_config: StreamConfig
     ) -> str:
         """Build encoder element string"""
-        bitrate = stream_config.bitrate_kbps
+        bitrate = stream_config.bitrate
         
         if stream_config.encoding == "h264":
             # Try hardware encoder first
