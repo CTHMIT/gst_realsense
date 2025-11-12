@@ -197,17 +197,25 @@ class GStreamerInterface:
             return f"ros2src topic={topic} ! {caps}"
         
         else:
-            v4l2_format = stream_config.gstreamer_format
-            
-            if v4l2_format:
-                gst_format_str = f"format={v4l2_format.upper()}"
+            # For depth stream, use Z16 from camera and convert to GRAY16_LE
+            if stream_type == StreamType.DEPTH:
+                source_element = (
+                    f"v4l2src device={device} io-mode=0 ! "
+                    f"video/x-raw,format=Z16,width={width},height={height},framerate={fps}/1 ! "
+                    f"videoconvert ! video/x-raw,format=GRAY16_LE"
+                )
             else:
-                raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
+                v4l2_format = stream_config.gstreamer_format
+                
+                if v4l2_format:
+                    gst_format_str = f"format={v4l2_format.upper()}"
+                else:
+                    raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
-            source_element = (
-                f"v4l2src device={device} io-mode=0 ! "
-                f"video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
-            )
+                source_element = (
+                    f"v4l2src device={device} io-mode=0 ! "
+                    f"video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
+                )
             
             return source_element
     
@@ -221,7 +229,8 @@ class GStreamerInterface:
 
         if rtp.codec == "nvv4l2h264enc":
             if stream_type == StreamType.DEPTH:
-                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+                # Depth already converted to GRAY16_LE in source, now convert to GRAY8 for encoder
+                conv = "videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                 conv = "videoconvert ! video/x-raw,format=I420 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             
@@ -239,7 +248,7 @@ class GStreamerInterface:
 
         if rtp.codec == "nvh264enc":
             if stream_type == StreamType.DEPTH:
-                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+                conv = "videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             else:
                 conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             enc = (
@@ -252,7 +261,7 @@ class GStreamerInterface:
         if stream_type == StreamType.COLOR:
             conv = "videoconvert ! video/x-raw,format=I420"
         elif stream_type == StreamType.DEPTH:
-            conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+            conv = "videoscale ! video/x-raw,format=GRAY8"
         else:
             conv = "videoconvert ! video/x-raw,format=GRAY8"
         enc = (
@@ -479,7 +488,7 @@ class GStreamerInterface:
 
         source = (
             f"v4l2src device={device} io-mode=0 ! "
-            f"video/x-raw,format=(string)Y8I ,width={w},height={h},framerate={fps}/1 ! "
+            f"video/x-raw,format=Y8I,width={w},height={h},framerate={fps}/1 ! "
             "deinterleave name=d"
         )
         
@@ -733,7 +742,7 @@ class GStreamerInterface:
             raise RuntimeError("Could not find 'src' element in LZ4 receiver pipeline")
         
         pipeline.udp_socket.bind(("", pipeline.port))
-        pipeline.udp_socket.settimeout(1.0) #
+        pipeline.udp_socket.settimeout(1.0) 
         
         pipeline.socket_thread = threading.Thread(
             target=self._lz4_socket_listener,
