@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 RealSense D435i Streaming Sender with Auto-Detection
-Streams camera data to remote server
+Supports:
+- Standard streams (color)
+- Depth split mode (high/low 8-bit streams)
+- Y8I split mode (left/right infrared streams)
 """
 
 import sys
@@ -9,22 +12,24 @@ import signal
 import argparse
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 import logging
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from interface.gstreamer import GStreamerInterface, StreamType, StreamingConfigManager
+from interface.gstreamer import GStreamerInterface, StreamType
+from interface.config import StreamingConfigManager
 from utils.logger import LOGGER
 
 
 class StreamingSender:
-    """Manages sending camera streams"""
+    """Manages sending camera streams with support for split modes"""
     
     def __init__(self, config_path: str):
         self.config = StreamingConfigManager.from_yaml(config_path)
         self.interface = GStreamerInterface(self.config)
         self.running = False
+        self.active_pipelines = []
         
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -38,7 +43,10 @@ class StreamingSender:
     def start(
         self,
         stream_types: List[StreamType],
-        source_topics: Optional[dict] = None,
+        depth_mode: str = "split",  # "split", "lz4", or "single"
+        y8i_mode: str = "split",    # "split" or "single"
+        y8i_split_mode: str = "sidebyside",  # "sidebyside", "interleaved", "topbottom"
+        source_topics: Optional[Dict[StreamType, str]] = None,
         auto_detect: bool = True
     ):
         """
@@ -46,67 +54,250 @@ class StreamingSender:
         
         Args:
             stream_types: List of streams to send
-            source_topics: ROS2 topics for camera data
+            depth_mode: Depth transmission mode
+                - "split": Split into high/low 8-bit (H.264, lossless)
+                - "lz4": Single stream with LZ4 compression (lossless)
+                - "single": Single H.264 stream (lossy, not recommended)
+            y8i_mode: Y8I transmission mode
+                - "split": Split into left/right IR (from Y8I)
+                - "single": Send as separate INFRA_LEFT/INFRA_RIGHT
+            y8i_split_mode: Y8I split method (if y8i_mode="split")
+                - "sidebyside": [Left|Right] format
+                - "interleaved": [L0,R0,L1,R1...] format
+                - "topbottom": [Left above|Right below] format
+            source_topics: ROS2 topics for camera data (optional)
             auto_detect: Auto-detect RealSense devices
         """
         LOGGER.info("=" * 60)
-        LOGGER.info("Starting RealSense D435i Streaming Sender")
+        LOGGER.info("RealSense D435i Streaming Sender")
         LOGGER.info("=" * 60)
         
         LOGGER.info(f"Client: {self.config.network.client.ip} ({self.config.network.client.type})")
         LOGGER.info(f"Server: {self.config.network.server.ip}")
         LOGGER.info(f"Protocol: {self.config.network.transport.protocol.upper()}")
         LOGGER.info(f"Resolution: {self.config.realsense_camera.resolution} @ {self.config.realsense_camera.fps} fps")
-        LOGGER.info(f"Codec: {self.config.streaming.rtp.codec}")
         
-       
-        # Determine source
-        topics = {}
-        if source_topics:
-            topics = source_topics
-            LOGGER.info("Using ROS2 topics:")
-            for stream_type in stream_types:
-                topic = topics.get(stream_type)
-                if topic:
-                    LOGGER.info(f"  {stream_type.value}: {topic}")
+        # Show configuration
+        if StreamType.DEPTH in stream_types:
+            LOGGER.info(f"Depth mode: {depth_mode}")
         
-        else:
-            LOGGER.info("Auto-detecting RealSense devices...")
+        has_infrared = any(st in stream_types for st in [
+            StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT, StreamType.Y8I_STEREO
+        ])
+        if has_infrared:
+            LOGGER.info(f"Y8I mode: {y8i_mode}")
+            if y8i_mode == "split":
+                LOGGER.info(f"Y8I split mode: {y8i_split_mode}")
         
         # Start streams
-        LOGGER.info(f"Starting {len(stream_types)} stream(s)...")
+        LOGGER.info(f"\nStarting streams...")
         try:
-            all_launched_ok = self.interface.start_sender(
-                stream_types, 
-                topics if topics else None,
-                auto_detect=auto_detect
-            )
+            started_count = 0
+            
+            for stream_type in stream_types:
+                if stream_type == StreamType.DEPTH:
+                    # Handle depth based on mode
+                    if depth_mode == "split":
+                        success = self._start_depth_split(source_topics, auto_detect)
+                        if success:
+                            started_count += 2  # high + low
+                    elif depth_mode == "lz4" or depth_mode == "single":
+                        success = self._start_single_stream(stream_type, source_topics, auto_detect)
+                        if success:
+                            started_count += 1
+                    else:
+                        LOGGER.error(f"Unknown depth mode: {depth_mode}")
+                
+                elif stream_type in [StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT]:
+                    # Handle infrared
+                    if y8i_mode == "split" and stream_type == StreamType.INFRA_LEFT:
+                        # Start Y8I split (only once for left)
+                        success = self._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
+                        if success:
+                            started_count += 2  # left + right
+                    elif y8i_mode == "single":
+                        success = self._start_single_stream(stream_type, source_topics, auto_detect)
+                        if success:
+                            started_count += 1
+                    # Skip right if we already did split
+                    elif stream_type == StreamType.INFRA_RIGHT and y8i_mode == "split":
+                        continue
+                
+                elif stream_type == StreamType.Y8I_STEREO:
+                    # Y8I split mode
+                    success = self._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
+                    if success:
+                        started_count += 2
+                
+                else:
+                    # Standard stream (color, etc.)
+                    success = self._start_single_stream(stream_type, source_topics, auto_detect)
+                    if success:
+                        started_count += 1
+            
             self.running = True
             
+            # Wait for startup
             time.sleep(self.config.streaming.startup_delay)
             
+            # Check status
             status = self.interface.get_pipeline_status()
-            LOGGER.info("Pipeline Status:")
+            LOGGER.info("\nPipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
-                port = self.config.get_stream_port(stream)
-                LOGGER.info(f"  {stream}: {status_str} (port {port})")
+                try:
+                    port = self.config.get_stream_port(stream)
+                    LOGGER.info(f"  {stream}: {status_str} (port {port})")
+                except:
+                    LOGGER.info(f"  {stream}: {status_str}")
             
-            if not all_launched_ok or not all(status.values()):
+            if not all(status.values()):
                 LOGGER.error("Some pipelines failed to start!")
                 self.stop()
                 return False
             
             LOGGER.info("=" * 60)
-            LOGGER.info("Streaming started successfully!")
+            LOGGER.info(f"✓ Successfully started {started_count} stream(s)!")
             LOGGER.info("Press Ctrl+C to stop")
             LOGGER.info("=" * 60)
             
             return True
             
         except Exception as e:
-            LOGGER.error(f"Failed to start streaming: {e}")
+            LOGGER.error(f"Failed to start streaming: {e}", exc_info=True)
             self.stop()
+            return False
+    
+    def _start_single_stream(
+        self,
+        stream_type: StreamType,
+        source_topics: Optional[Dict[StreamType, str]],
+        auto_detect: bool
+    ) -> bool:
+        """Start a single standard stream"""
+        try:
+            # Get source
+            source_device = None
+            source_topic = None
+            
+            if source_topics and stream_type in source_topics:
+                source_topic = source_topics[stream_type]
+                LOGGER.info(f"  {stream_type.value}: Using topic {source_topic}")
+            elif auto_detect:
+                source_device = self.interface.detect_realsense_device(stream_type)
+                if not source_device:
+                    LOGGER.error(f"  {stream_type.value}: Could not detect device")
+                    return False
+                LOGGER.info(f"  {stream_type.value}: Detected device {source_device}")
+            else:
+                LOGGER.error(f"  {stream_type.value}: No source specified")
+                return False
+            
+            # Build pipeline
+            pipeline = self.interface.build_sender_pipeline(
+                stream_type,
+                source_device=source_device,
+                source_topic=source_topic
+            )
+            
+            # Launch
+            self.interface.launch_sender_pipeline(pipeline)
+            self.active_pipelines.append(pipeline)
+            
+            LOGGER.info(f"  ✓ {stream_type.value}: Started on port {pipeline.port}")
+            return True
+            
+        except Exception as e:
+            LOGGER.error(f"  ✗ {stream_type.value}: Failed - {e}")
+            return False
+    
+    def _start_depth_split(
+        self,
+        source_topics: Optional[Dict[StreamType, str]],
+        auto_detect: bool
+    ) -> bool:
+        """Start depth in split mode (high + low bytes)"""
+        try:
+            # Get source
+            source_device = None
+            
+            if source_topics and StreamType.DEPTH in source_topics:
+                # For split mode from topic, would need special handling
+                LOGGER.warning("  Depth: ROS2 topic source not supported for split mode, using auto-detect")
+            
+            if auto_detect:
+                source_device = self.interface.detect_realsense_device(StreamType.DEPTH)
+                if not source_device:
+                    LOGGER.error("  Depth: Could not detect device")
+                    return False
+                LOGGER.info(f"  Depth: Detected device {source_device}")
+            else:
+                LOGGER.error("  Depth: No source specified for split mode")
+                return False
+            
+            # Build split pipelines
+            high_pipeline, low_pipeline = self.interface.build_depth_split_sender_pipeline(
+                source_device=source_device
+            )
+            
+            # Launch both pipelines
+            self.interface.launch_sender_pipeline(high_pipeline)
+            self.interface.launch_sender_pipeline(low_pipeline)
+            
+            self.active_pipelines.extend([high_pipeline, low_pipeline])
+            
+            LOGGER.info(f"  ✓ Depth (split mode):")
+            LOGGER.info(f"    - High byte: port {high_pipeline.port}")
+            LOGGER.info(f"    - Low byte: port {low_pipeline.port}")
+            return True
+            
+        except Exception as e:
+            LOGGER.error(f"  ✗ Depth (split): Failed - {e}")
+            return False
+    
+    def _start_y8i_split(
+        self,
+        split_mode: str,
+        source_topics: Optional[Dict[StreamType, str]],
+        auto_detect: bool
+    ) -> bool:
+        """Start Y8I in split mode (left + right IR)"""
+        try:
+            # Get source
+            source_device = None
+            
+            if source_topics and StreamType.Y8I_STEREO in source_topics:
+                LOGGER.warning("  Y8I: ROS2 topic source not supported for split mode, using auto-detect")
+            
+            if auto_detect:
+                source_device = self.interface.detect_realsense_device(StreamType.Y8I_STEREO)
+                if not source_device:
+                    LOGGER.error("  Y8I: Could not detect device")
+                    return False
+                LOGGER.info(f"  Y8I: Detected device {source_device}")
+            else:
+                LOGGER.error("  Y8I: No source specified for split mode")
+                return False
+            
+            # Build split pipelines
+            left_pipeline, right_pipeline = self.interface.build_y8i_split_sender_pipeline(
+                source_device=source_device,
+                split_mode=split_mode
+            )
+            
+            # Launch both pipelines
+            self.interface.launch_sender_pipeline(left_pipeline)
+            self.interface.launch_sender_pipeline(right_pipeline)
+            
+            self.active_pipelines.extend([left_pipeline, right_pipeline])
+            
+            LOGGER.info(f"  ✓ Y8I (split mode: {split_mode}):")
+            LOGGER.info(f"    - Left IR: port {left_pipeline.port}")
+            LOGGER.info(f"    - Right IR: port {right_pipeline.port}")
+            return True
+            
+        except Exception as e:
+            LOGGER.error(f"  ✗ Y8I (split): Failed - {e}")
             return False
     
     def stop(self):
@@ -114,6 +305,7 @@ class StreamingSender:
         if self.running:
             LOGGER.info("Stopping streams...")
             self.interface.stop_all()
+            self.active_pipelines.clear()
             self.running = False
             LOGGER.info("All streams stopped")
     
@@ -123,6 +315,7 @@ class StreamingSender:
             while self.running:
                 time.sleep(1)
                 
+                # Check pipeline status periodically
                 status = self.interface.get_pipeline_status()
                 if not all(status.values()):
                     LOGGER.warning("Some pipelines stopped unexpectedly!")
@@ -132,7 +325,7 @@ class StreamingSender:
                     break
                     
         except KeyboardInterrupt:
-            LOGGER.info("Interrupted by user")
+            LOGGER.info("\nInterrupted by user")
         finally:
             self.stop()
 
@@ -140,23 +333,26 @@ class StreamingSender:
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="RealSense D435i Streaming Sender with Auto-Detection",
+        description="RealSense D435i Streaming Sender with Split Mode Support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Auto-detect RealSense and send all streams
-  python sender.py --all
+  # Send all streams with depth split and Y8I split (recommended)
+  python sender.py --all --depth-mode split --y8i-mode split
   
-  # Send all streams using test sources
-  python sender.py --all --test
+  # Send only color stream
+  python sender.py --color
   
-  # Send specific streams with ROS2 topics
-  python sender.py --color --depth \\
+  # Send depth in lossless LZ4 mode
+  python sender.py --depth --depth-mode lz4
+  
+  # Send Y8I with specific split mode
+  python sender.py --y8i --y8i-mode split --y8i-split-mode interleaved
+  
+  # Send with ROS2 topics (single streams only)
+  python sender.py --color --depth --depth-mode single \\
     --color-topic /camera/color/image_raw \\
     --depth-topic /camera/depth/image_rect_raw
-  
-  # Send only color stream (auto-detect device)
-  python sender.py --color
         """
     )
     
@@ -171,19 +367,43 @@ Examples:
     stream_group.add_argument("--all", action="store_true", help="Enable all streams")
     stream_group.add_argument("--color", action="store_true", help="Enable color stream")
     stream_group.add_argument("--depth", action="store_true", help="Enable depth stream")
-    stream_group.add_argument("--infra1", action="store_true", help="Enable infrared 1 stream")
-    stream_group.add_argument("--infra2", action="store_true", help="Enable infrared 2 stream")
+    stream_group.add_argument("--y8i", action="store_true", help="Enable Y8I stereo infrared")
+    stream_group.add_argument("--infra-left", action="store_true", help="Enable left infrared")
+    stream_group.add_argument("--infra-right", action="store_true", help="Enable right infrared")
     
-    topic_group = parser.add_argument_group("ROS2 Topics")
+    mode_group = parser.add_argument_group("Transmission Modes")
+    mode_group.add_argument(
+        "--depth-mode",
+        type=str,
+        choices=["split", "lz4", "single"],
+        default="split",
+        help="Depth transmission mode (default: split)"
+    )
+    mode_group.add_argument(
+        "--y8i-mode",
+        type=str,
+        choices=["split", "single"],
+        default="split",
+        help="Y8I/infrared transmission mode (default: split)"
+    )
+    mode_group.add_argument(
+        "--y8i-split-mode",
+        type=str,
+        choices=["sidebyside", "interleaved", "topbottom"],
+        default="sidebyside",
+        help="Y8I split format (default: sidebyside)"
+    )
+    
+    topic_group = parser.add_argument_group("ROS2 Topics (for single stream mode)")
     topic_group.add_argument("--color-topic", type=str, help="Color stream ROS2 topic")
     topic_group.add_argument("--depth-topic", type=str, help="Depth stream ROS2 topic")
-    topic_group.add_argument("--infra1-topic", type=str, help="Infrared 1 ROS2 topic")
-    topic_group.add_argument("--infra2-topic", type=str, help="Infrared 2 ROS2 topic")
+    topic_group.add_argument("--infra-left-topic", type=str, help="Left infrared ROS2 topic")
+    topic_group.add_argument("--infra-right-topic", type=str, help="Right infrared ROS2 topic")
     
     parser.add_argument(
-        "--auto-detect",
-        default=True,
-        help="Auto detect realsense device"
+        "--no-auto-detect",
+        action="store_true",
+        help="Disable auto-detection of RealSense devices"
     )
     parser.add_argument(
         "--verbose",
@@ -204,15 +424,18 @@ def main():
     # Determine streams
     stream_types = []
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT, StreamType.DEPTH]
+        # All mode: color + depth + Y8I
+        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.Y8I_STEREO]
     else:
         if args.color:
             stream_types.append(StreamType.COLOR)
         if args.depth:
             stream_types.append(StreamType.DEPTH)
-        if args.infra1:
+        if args.y8i:
+            stream_types.append(StreamType.Y8I_STEREO)
+        if args.infra_left:
             stream_types.append(StreamType.INFRA_LEFT)
-        if args.infra2:
+        if args.infra_right:
             stream_types.append(StreamType.INFRA_RIGHT)
     
     if not stream_types:
@@ -221,22 +444,32 @@ def main():
     
     # Build source topics
     source_topics = {}
-    if args.color_topic and StreamType.COLOR in stream_types:
+    if args.color_topic:
         source_topics[StreamType.COLOR] = args.color_topic
-    if args.depth_topic and StreamType.DEPTH in stream_types:
+    if args.depth_topic:
         source_topics[StreamType.DEPTH] = args.depth_topic
-    if args.infra1_topic and StreamType.INFRA_LEFT in stream_types:
-        source_topics[StreamType.INFRA_LEFT] = args.infra1_topic
-    if args.infra2_topic and StreamType.INFRA_RIGHT in stream_types:
-        source_topics[StreamType.INFRA_RIGHT] = args.infra2_topic
+    if args.infra_left_topic:
+        source_topics[StreamType.INFRA_LEFT] = args.infra_left_topic
+    if args.infra_right_topic:
+        source_topics[StreamType.INFRA_RIGHT] = args.infra_right_topic
+    
+    # Validate configurations
+    if source_topics and args.depth_mode == "split":
+        LOGGER.warning("ROS2 topics not supported with depth split mode, will use auto-detect")
+    
+    if source_topics and args.y8i_mode == "split":
+        LOGGER.warning("ROS2 topics not supported with Y8I split mode, will use auto-detect")
     
     # Create and start sender
     try:
         sender = StreamingSender(args.config)
         success = sender.start(
-            stream_types, 
-            source_topics, 
-            auto_detect=args.auto_detect,
+            stream_types=stream_types,
+            depth_mode=args.depth_mode,
+            y8i_mode=args.y8i_mode,
+            y8i_split_mode=args.y8i_split_mode,
+            source_topics=source_topics if source_topics else None,
+            auto_detect=not args.no_auto_detect
         )
         
         if success:
