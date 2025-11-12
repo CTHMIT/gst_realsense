@@ -504,91 +504,128 @@ class GStreamerInterface:
         source_device: Optional[str] = None,
         split_mode: str = "sidebyside"
     ) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
-        import shlex
+        """
+        Build sender pipelines for Y8I split into left/right infrared streams
+        
+        Args:
+            source_device: V4L2 device path
+            split_mode: "sidebyside", "interleaved", or "topbottom"
+            
+        Returns:
+            (left_pipeline, right_pipeline): Tuple of pipelines for left and right IR
+        """
         self.y8i_mode = split_mode
-
-        y8i_width  = self.config.realsense_camera.width
-        y8i_height = self.config.realsense_camera.height
-        fps        = self.config.realsense_camera.fps
+        
+        # Y8I dimensions
+        y8i_width = self.config.realsense_camera.width  # e.g., 424 for 212x240 per IR
+        y8i_height = self.config.realsense_camera.height  # e.g., 240
+        fps = self.config.realsense_camera.fps
+        
         single_ir_width = y8i_width // 2
-
-        left_port  = self._get_port(StreamType.INFRA_LEFT)
+        
+        # Get ports
+        left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)
-        pt_l = self._get_payload_type(StreamType.INFRA_LEFT)
-        pt_r = self._get_payload_type(StreamType.INFRA_RIGHT)
-        protocol = self.config.network.transport.protocol  # "udp"
+        pt_l = self._get_payload_type(StreamType.INFRA_LEFT) # 100
+        pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) # 101
+        protocol = self.config.network.transport.protocol
         server_ip = self.config.network.server.ip
-        left_sink  = f"{protocol}sink host={server_ip} port={left_port} sync=false"
-        right_sink = f"{protocol}sink host={server_ip} port={right_port} sync=false"
 
+        # Sinks
+        left_sink = f"{protocol}sink host={server_ip} port={left_port}"
+        right_sink = f"{protocol}sink host={server_ip} port={right_port}"
+        
         device = source_device or self.detect_realsense_device(StreamType.Y8I_STEREO)
         if not device:
             raise RuntimeError("Could not find Y8I device")
-
+        
         LOGGER.info(f"Building Y8I split sender: {y8i_width}x{y8i_height}@{fps}fps (mode: {split_mode})")
         LOGGER.info(f"  Single IR: {single_ir_width}x{y8i_height}")
-        LOGGER.info(f"  Left IR → port {left_port}, pt {pt_l}")
-        LOGGER.info(f"  Right IR → port {right_port}, pt {pt_r}")
-
+        LOGGER.info(f"  Left IR stream → port {left_port}, pt {pt_l}")
+        LOGGER.info(f"  Right IR stream → port {right_port}, pt {pt_r}")
+        
+        # V4L2 command to capture Y8I
         v4l2_cmd = (
             f"v4l2-ctl -d {shlex.quote(device)} "
             f"--set-fmt-video=width={y8i_width},height={y8i_height},pixelformat='Y8I ' "
-            f"--set-parm={fps} --stream-mmap --stream-count=0 --stream-to=-"
+            f"--set-parm={fps} "
+            f"--stream-mmap --stream-count=0 --stream-to=-"
         )
-
+        
+        # Base pipeline for reading Y8I
+        base_pipeline = (
+            f"fdsrc name=src ! "
+            f"queue max-size-buffers=2 ! "
+            f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
+            f"appsink name=sink emit-signals=true sync=false"
+        )
+    
         ir_caps_str = (
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
+
+        # 1. videoconvert CPU 
         cpu_nv12_caps_str = (
-            f"video/x-raw,format=NV12,interlace-mode=progressive,colorimetry=bt709,"
-            f"pixel-aspect-ratio=1/1,width={single_ir_width},height={y8i_height},framerate={fps}/1"
+            f"video/x-raw,format=NV12,"
+            f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
+
+        # 2. nvvidconv NVIDIA 
         nvmm_caps_str = (
-            f"video/x-raw(memory:NVMM),format=NV12,width={single_ir_width},height={y8i_height},framerate={fps}/1"
+            f"video/x-raw(memory:NVMM),format=NV12,"
+            f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
 
-        enc_left  = self._build_encoder(StreamType.INFRA_LEFT,  self._get_stream_config(StreamType.INFRA_LEFT))
-        enc_right = self._build_encoder(StreamType.INFRA_RIGHT, self._get_stream_config(StreamType.INFRA_RIGHT))
-
-        q = "queue max-size-buffers=0 max-size-time=0 leaky=downstream"
-
+        # Get stream configs
+        left_config = self._get_stream_config(StreamType.INFRA_LEFT)
+        right_config = self._get_stream_config(StreamType.INFRA_RIGHT)
+        
+        # Create encoders
+        encoder_left = self._build_encoder(StreamType.INFRA_LEFT, left_config)
+        encoder_right = self._build_encoder(StreamType.INFRA_RIGHT, right_config)
+        
         left_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-            f"{q} ! videoconvert ! {cpu_nv12_caps_str} ! "
-            f"nvvidconv ! {nvmm_caps_str} ! "
-            f"{enc_left} ! "
-            f"h264parse config-interval=-1 disable-passthrough=true ! "
-            f"rtph264pay pt={pt_l} config-interval=1 mtu=1200 ! "
-            f"{q} ! {left_sink}"
+            f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
+            f"{cpu_nv12_caps_str} ! "
+            f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "
+            f"{encoder_left} ! "  
+            f"{left_sink}"        
         )
-
+        
+        # Right IR pipeline
         right_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-            f"{q} ! videoconvert ! {cpu_nv12_caps_str} ! "
-            f"nvvidconv ! {nvmm_caps_str} ! "
-            f"{enc_right} ! "
-            f"h264parse config-interval=-1 disable-passthrough=true ! "
-            f"rtph264pay pt={pt_r} config-interval=1 mtu=1200 ! "
-            f"{q} ! {right_sink}"
+            f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
+            f"{cpu_nv12_caps_str} ! "
+            f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "
+            f"{encoder_right} ! " 
+            f"{right_sink}"       
         )
-
+        
         left_pipeline = GStreamerPipeline(
             pipeline_str=left_pipeline_str,
             stream_type=StreamType.INFRA_LEFT,
             port=left_port,
             pt=pt_l,
-            v4l2_cmd=v4l2_cmd
+            v4l2_cmd=v4l2_cmd  
         )
+        
         right_pipeline = GStreamerPipeline(
             pipeline_str=right_pipeline_str,
             stream_type=StreamType.INFRA_RIGHT,
             port=right_port,
             pt=pt_r
         )
+        
         left_pipeline.paired_pipeline = right_pipeline
         right_pipeline.paired_pipeline = left_pipeline
+        
         return left_pipeline, right_pipeline
-
     
     
     def build_sender_pipeline(
