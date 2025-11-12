@@ -758,7 +758,16 @@ class GStreamerInterface:
             sink = self._build_sink(stream_type)
             
             protocol = self.config.network.transport.protocol
-            pipeline_str = f"{protocol}src port={port} ! {decoder} ! {sink}"
+
+            # === FIX: Get payload type and build caps string here ===
+            pt = self._get_payload_type(stream_type)
+            caps_str = (
+                f"application/x-rtp,media=video,clock-rate=90000,"
+                f"encoding-name=H264,payload={pt}"
+            )
+            
+            # === FIX: Apply 'caps' directly to 'udpsrc' ===
+            pipeline_str = f"{protocol}src port={port} caps=\"{caps_str}\" ! {decoder} ! {sink}"
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -866,7 +875,6 @@ class GStreamerInterface:
         )
         
         return (
-            f"caps=\"{caps_str}\" ! "
             f"rtph264depay ! "
             f"h264parse ! "
             f"avdec_h264 ! "
