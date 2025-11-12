@@ -451,7 +451,8 @@ class GStreamerInterface:
         right_port = self._get_port(StreamType.INFRA_RIGHT)
         pt_l = self._get_payload_type(StreamType.INFRA_LEFT) # 100
         pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) # 101
-       
+        left_sink = f"{protocol}sink host={server_ip} port={left_port}"
+        right_sink = f"{protocol}sink host={server_ip} port={right_port}"
         
         device = source_device or self.detect_realsense_device(StreamType.Y8I_STEREO)
         if not device:
@@ -485,12 +486,17 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
     
-        # appsrc
         ir_caps_str = (
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
 
-        # nvvidconv 
+        # 1. videoconvert CPU 
+        cpu_nv12_caps_str = (
+            f"video/x-raw,format=NV12,"
+            f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
+        )
+
+        # 2. nvvidconv NVIDIA 
         nvmm_caps_str = (
             f"video/x-raw(memory:NVMM),format=NV12,"
             f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
@@ -507,17 +513,24 @@ class GStreamerInterface:
         left_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
+            f"{cpu_nv12_caps_str} ! "
             f"nvvidconv ! "
-            f"{nvmm_caps_str} ! "  
-            f"{encoder_left}"
+            f"{nvmm_caps_str} ! "
+            f"{encoder_left} ! "  
+            f"{left_sink}"        
         )
         
+        # Right IR pipeline
         right_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
+            f"{cpu_nv12_caps_str} ! "
             f"nvvidconv ! "
-            f"{nvmm_caps_str} ! "  
-            f"{encoder_right}"
+            f"{nvmm_caps_str} ! "
+            f"{encoder_right} ! " 
+            f"{right_sink}"       
         )
         
         left_pipeline = GStreamerPipeline(
