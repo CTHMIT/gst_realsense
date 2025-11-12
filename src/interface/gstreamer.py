@@ -193,7 +193,6 @@ class GStreamerInterface:
         stream_config = self._get_stream_config(stream_type)
         
         if topic:
-            # ROS2 source
             caps = f"video/x-raw,format={stream_config.gstreamer_format},width={width},height={height},framerate={fps}/1"
             return f"ros2src topic={topic} ! {caps}"
         
@@ -477,13 +476,13 @@ class GStreamerInterface:
         
         out_w = w
         out_h = h // 2 
+        
         source = (
-            f"v4l2src device={device} ! "
+            f"v4l2src device={device} io-mode=0 ! "
             f"video/x-raw,format=Y8I,width={w},height={h},framerate={fps}/1 ! "
             "deinterleave name=d"
         )
         
-        # 2. Infra1 Branch (從 d.src_0 輸出)
         scfg1 = self._get_stream_config(StreamType.INFRA1)
         port1 = self._get_port(StreamType.INFRA1)
         pay1 = self._build_payloader(StreamType.INFRA1)
@@ -496,7 +495,6 @@ class GStreamerInterface:
             f"{enc1} ! {pay1} ! {sink1}"
         )
 
-        # 3. Infra2 Branch (從 d.src_1 輸出)
         scfg2 = self._get_stream_config(StreamType.INFRA2)
         port2 = self._get_port(StreamType.INFRA2)
         pay2 = self._build_payloader(StreamType.INFRA2)
