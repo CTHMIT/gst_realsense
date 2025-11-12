@@ -14,6 +14,9 @@ import socket
 import lz4.frame
 import time  
 import gi
+import shlex # <-- [修正] 匯入 shlex
+import os # <-- [修正] 匯入 os
+
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0') 
 from gi.repository import Gst, GLib, GstApp
@@ -46,6 +49,12 @@ class GStreamerPipeline:
     gst_pipeline: Optional[Gst.Pipeline] = None
     udp_socket: Optional[socket.socket] = None
     socket_thread: Optional[threading.Thread] = None
+    
+    # --- [修正] ---
+    # 新增欄位以處理 v4l2-ctl  subprocess
+    v4l2_cmd: Optional[str] = None
+    v4l2_process: Optional[subprocess.Popen] = None
+    # -----------------
 
 
 class GStreamerInterface:
@@ -78,7 +87,7 @@ class GStreamerInterface:
     def detect_realsense_device(
         self, 
         stream_type: StreamType,
-        exclude_devices: List[str] = None  # <-- 這是修改
+        exclude_devices: List[str] = None
     ) -> Optional[str]:
         """
         Auto-detect RealSense camera device for given stream type,
@@ -158,11 +167,49 @@ class GStreamerInterface:
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
         
+        # --- [修正] ---
+        # Z16/Depth 串流的全新管線邏輯
         if stream_config.encoding == "lz4":
-            # --- LZ4 Lossless Pipeline (Depth Only) ---
-            LOGGER.info(f"Building LZ4 (lossless) sender pipeline for {stream_type.value}")
-            source = self._build_source(stream_type, source_device, source_topic)
-            pipeline_str = f"{source} ! appsink name=sink emit-signals=true sync=false"
+            LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using v4l2-ctl + fdsrc")
+            
+            # 獲取參數
+            device = source_device
+            width = self.config.realsense_camera.width
+            height = self.config.realsense_camera.height
+            fps = self.config.realsense_camera.fps
+            
+            # 1. 建立 v4l2-ctl 指令
+            # 來自 rs_core.py DepthStreamStrategy (line 309)
+            # 注意 'Z16 ' 中的空格，這在 v4l2-ctl 中是必需的
+            fourcc_clean = 'Z16 '
+            v4l2_cmd = (
+                f"v4l2-ctl -d {shlex.quote(device)} "
+                f"--set-fmt-video=width={width},height={height},pixelformat='{fourcc_clean}' "
+                f"--set-parm={fps} "
+                f"--stream-mmap --stream-count=0 --stream-to=-"
+            )
+
+            # 2. 建立 GStreamer 管線字串，從 fdsrc 讀取
+            # 我們將在 _launch_pygobject_pipeline 中設定 'fd' 屬性
+            # 這將管線導向到 appsink，以便 Python 程式碼可以進行 LZ4 壓縮
+            pipeline_str = (
+                f"fdsrc name=src ! "
+                f"queue max-size-buffers=2 ! "
+                f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                f"appsink name=sink emit-signals=true sync=false"
+            )
+
+            LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
+            LOGGER.debug(f"Pipeline: {pipeline_str}")
+            LOGGER.debug(f"V4L2 Cmd: {v4l2_cmd}")
+
+            return GStreamerPipeline(
+                pipeline_str=pipeline_str,
+                stream_type=stream_type,
+                port=port,
+                v4l2_cmd=v4l2_cmd  # <-- 儲存 v4l2-ctl 指令
+            )
+        # --- [修正結束] ---
 
         else:
             # --- H.264 Lossy Pipeline (Color, Infra, or fallback Depth) ---
@@ -175,48 +222,39 @@ class GStreamerInterface:
             sink = self._build_sender_sink(port)
             pipeline_str = f"{source} ! {encoder} ! {payloader} ! {sink}"
 
-        LOGGER.info(f"Built sender pipeline for {stream_type.value} on port {port}")
-        LOGGER.debug(f"Pipeline: {pipeline_str}")
-        
-        return GStreamerPipeline(
-            pipeline_str=pipeline_str,
-            stream_type=stream_type,
-            port=port
-        )
+            LOGGER.info(f"Built sender pipeline for {stream_type.value} on port {port}")
+            LOGGER.debug(f"Pipeline: {pipeline_str}")
+            
+            return GStreamerPipeline(
+                pipeline_str=pipeline_str,
+                stream_type=stream_type,
+                port=port
+            )
     
     def _build_source(self, stream_type: StreamType, device: Optional[str] = None, topic: Optional[str] = None) -> str:
-        """Build source element"""
+        """Build source element (H.264 串流使用)"""
         width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
         stream_config = self._get_stream_config(stream_type)
-
         
         if topic:
             caps = f"video/x-raw,format={stream_config.gstreamer_format},width={width},height={height},framerate={fps}/1"
             return f"ros2src topic={topic} ! {caps}"
         
         else:
-            # For depth stream, request GRAY16_LE directly (v4l2 driver handles Z16->GRAY16_LE)
-            if stream_type == StreamType.DEPTH:
-                source_element = (
-                    f"v4l2src device={device} io-mode=0 ! "
-                    f"video/x-raw,format=Z16,width={width},height={height},framerate={fps}/1"
-                )
-        
+            v4l2_format = stream_config.gstreamer_format
+            
+            if v4l2_format:
+                gst_format_str = f"format={v4l2_format.upper()}"
             else:
-                v4l2_format = stream_config.gstreamer_format
-                
-                if v4l2_format:
-                    gst_format_str = f"format={v4l2_format}" 
-                else:
-                    raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
+                raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
-                source_element = (
-                    f"v4l2src device={device} io-mode=0 ! "
-                    f"video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
-                )
+            source_element = (
+                f"v4l2src device={device} io-mode=0 ! "
+                f"video/x-raw,{gst_format_str},width={width},height={height},framerate={fps}/1"
+            )
             
             return source_element
     
@@ -229,13 +267,13 @@ class GStreamerInterface:
         bitrate_bps = bitrate_kbps * 1000
 
         if rtp.codec == "nvv4l2h264enc":
+            # [修正] 確保 Y8I (作為 GRAY8) 能被正確轉換
             if stream_type == StreamType.DEPTH:
-                # Depth already converted to GRAY16_LE in source, now convert to GRAY8 for encoder
-                conv = "videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                # Y8I (GRAY8) -> I420 -> NVMM
                 conv = "videoconvert ! video/x-raw,format=I420 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
-            
-            else:
+            else: # Color
                 conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             
             enc = (
@@ -249,8 +287,11 @@ class GStreamerInterface:
 
         if rtp.codec == "nvh264enc":
             if stream_type == StreamType.DEPTH:
-                conv = "videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
-            else:
+                conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+            # [修正] 確保 Y8I (作為 GRAY8) 能被正確轉換
+            elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                conv = "videoconvert ! video/x-raw,format=I420 ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
+            else: # Color
                 conv = "videoconvert ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12"
             enc = (
                 "nvh264enc "
@@ -259,11 +300,13 @@ class GStreamerInterface:
                 "! video/x-h264,profile=baseline,stream-format=byte-stream"
             )
             return f"{q} ! {conv} ! {enc}"
+
+        # --- x264enc (Software) ---
         if stream_type == StreamType.COLOR:
             conv = "videoconvert ! video/x-raw,format=I420"
         elif stream_type == StreamType.DEPTH:
-            conv = "videoscale ! video/x-raw,format=GRAY8"
-        else:
+            conv = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
+        else: # INFRA1, INFRA2 (GRAY8)
             conv = "videoconvert ! video/x-raw,format=GRAY8"
         enc = (
             "x264enc "
@@ -354,7 +397,12 @@ class GStreamerInterface:
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
-            gst_format = stream_config.gstreamer_format # e.g., GRAY16_LE
+            
+            # [修正] 確保使用 config.yaml 中為 Z16/lz4 定義的 gstreamer_format
+            # 您的舊 config.yaml (line 46) 將其設為 "Z16"
+            # 這應該是 "GRAY16_LE" 或 "Y16"。 
+            # 根據我們在 sender 端的修正 (videoparse format=gray16-le)，這裡也應該是 GRAY16_LE
+            gst_format = "GRAY16_LE" 
             
             return (
                 f"appsrc name=src format=time is-live=True do-timestamp=True "
@@ -398,9 +446,29 @@ class GStreamerInterface:
         elif stream_type == StreamType.DEPTH:
             output_format = "videoconvert ! videoscale ! video/x-raw,format=GRAY8"
             LOGGER.warning(f"{stream_type.value}: Depth precision reduced to 8-bit due to H264 encoding")
-        else:
-            output_format = f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format}"
-        
+        else: # INFRA
+            # [修正] 處理接收端 Y8I-as-GRAY8
+            # 接收端需要知道 Y8I 的 *完整* 寬度
+            # 假設 w, h 來自 config (例如 640x480)
+            w = self.config.realsense_camera.width * 2
+            h = self.config.realsense_camera.height
+            single_w = self.config.realsense_camera.width
+            
+            if stream_type == StreamType.INFRA1:
+                # 保留左半邊 (infra1)
+                crop = f"! videocrop right={single_w}"
+            elif stream_type == StreamType.INFRA2:
+                # 保留右半邊 (infra2)
+                crop = f"! videocrop left={single_w}"
+            else:
+                crop = "" # 不應該發生
+
+            # 輸出格式應為 GRAY8，但要先指定完整的寬度
+            output_format = (
+                f"videoconvert ! video/x-raw,format={stream_config.gstreamer_format},width={w},height={h} "
+                f"{crop}"
+            )
+            
         return f"{queue} ! {decoder} ! {output_format}"
     
     def _build_receiver_sink(
@@ -430,7 +498,8 @@ class GStreamerInterface:
         
         else:
             if stream_config.encoding == "lz4":
-                return "videoconvert ! autovideosink sync=false"
+                # [修正] 確保 16-bit 深度可以被正確顯示 (轉換為 8-bit)
+                return "videoconvert ! videoscale ! video/x-raw,format=GRAY8 ! autovideosink sync=false"
             else:
                 return "videoconvert ! xvimagesink sync=false"
     
@@ -460,9 +529,16 @@ class GStreamerInterface:
                         ["v4l2-ctl", "--device", device, "--list-formats-ext"],
                         capture_output=True, text=True, timeout=2
                     )
-                    if fmt_result.returncode == 0 and "Y8I " in fmt_result.stdout: 
-                        LOGGER.info(f"Detected Y8I support at {device}")
-                        return device
+                    # [修正] 尋找 'Y8I ' (帶空格) 或 'GRAY8' (用於 Y8I-as-GRAY8 策略)
+                    if fmt_result.returncode == 0:
+                        if "Y8I " in fmt_result.stdout:
+                            LOGGER.info(f"Detected Y8I support at {device}")
+                            return device
+                        if "GRAY8" in fmt_result.stdout:
+                             # 檢查 'GRAY8' 是否具有雙倍寬度
+                            if f"{self.config.realsense_camera.width * 2}x{self.config.realsense_camera.height}" in fmt_result.stdout:
+                                LOGGER.info(f"Detected double-width GRAY8 (for Y8I) at {device}")
+                                return device
                         
                 except subprocess.TimeoutExpired:
                     continue
@@ -475,51 +551,44 @@ class GStreamerInterface:
             
         return None
     
+    # --- [修正] ---
     def _build_interleaved_infra_pipeline_str(self, device: str) -> str:
         """
         Builds a single GStreamer pipeline string that reads from a Y8I (interleaved)
-        source, deinterleaves it, and encodes/sends both infra1 and infra2.
+        source as a double-width GRAY8, deinterleaves it, and encodes/sends both.
+        
+        [註]：此函式已被重寫，以符合 rs_core.py Y8IStreamStrategy (line 461) 的邏輯。
+        它只傳送一個合併的串流。
         """
-        w = self.config.realsense_camera.width 
-        h = self.config.realsense_camera.height 
-        fps = self.config.realsense_camera.fps 
+        # Y8I 設備報告雙倍寬度。
+        # 舊 config.yaml (line 19) 使用 640x480，
+        # 因此 Y8I 設備的寬度應為 1280。
+        w = self.config.realsense_camera.width * 2  # 1280
+        h = self.config.realsense_camera.height # 480
+        fps = self.config.realsense_camera.fps # 30
         
-        out_w = w
-        out_h = h // 2 
-
-        source = (
-            f"v4l2src device={device} io-mode=0 ! "
-            f"video/x-raw,format=Y8I,width={w},height={h},framerate={fps}/1 ! "
-            "deinterleave name=d keep-positions=true"  #
-        )
-        
+        # 我們將合併的串流傳送到 INFRA1 的埠
         scfg1 = self._get_stream_config(StreamType.INFRA1)
         port1 = self._get_port(StreamType.INFRA1)
-        pay1 = self._build_payloader(StreamType.INFRA1)
+        
+        # 使用 infra1 的 payload type (例如 97)
+        pay1 = self._build_payloader(StreamType.INFRA1) 
         sink1 = self._build_sender_sink(port1)
+        
+        # 編碼器需要能處理 GRAY8。_build_encoder 已在 (line 280) 修正
         enc1 = self._build_encoder(StreamType.INFRA1, scfg1) 
         
-        branch1 = (
-            f"d.src_0 ! "
-            f"video/x-raw,format=GRAY8,width={out_w},height={out_h},framerate={fps}/1 ! "
-            f"{enc1} ! {pay1} ! {sink1}"
-        )
-
-        scfg2 = self._get_stream_config(StreamType.INFRA2)
-        port2 = self._get_port(StreamType.INFRA2)
-        pay2 = self._build_payloader(StreamType.INFRA2)
-        sink2 = self._build_sender_sink(port2)
-        enc2 = self._build_encoder(StreamType.INFRA2, scfg2)
-
-        branch2 = (
-            f"d.src_1 ! "
-            f"video/x-raw,format=GRAY8,width={out_w},height={out_h},framerate={fps}/1 ! "
-            f"{enc2} ! {pay2} ! {sink2}"
+        # 關鍵：請求 GRAY8 格式，使用雙倍寬度
+        source = (
+            f"v4l2src device={device} do-timestamp=true "
+            f"! video/x-raw,format=GRAY8,width={w},height={h},framerate={fps}/1 "
         )
         
-        pipeline_str = f"{source} {branch1} {branch2}"
-        LOGGER.debug(f"Built interleaved infra pipeline: {pipeline_str}")
+        pipeline_str = f"{source} ! {enc1} ! {pay1} ! {sink1}"
+        
+        LOGGER.debug(f"Built Y8I-as-GRAY8 pipeline: {pipeline_str}")
         return pipeline_str
+    # --- [修正結束] ---
 
     def start_sender(
         self,
@@ -548,27 +617,31 @@ class GStreamerInterface:
             not source_topics.get(StreamType.INFRA1) and
             not source_topics.get(StreamType.INFRA2)):
             
-            LOGGER.info("Both INFRA1 and INFRA2 requested, attempting interleaved Y8I mode...")
+            LOGGER.info("Both INFRA1 and INFRA2 requested, attempting Y8I-as-GRAY8 mode...")
             try:
+                # [修正] _detect_y8i_device 現在會尋找 GRAY8 雙倍寬度
                 infra_dev = self._detect_y8i_device(allocated_devices)
                 
                 if infra_dev:
-                    LOGGER.info(f"Found Y8I device at {infra_dev}. Building interleaved pipeline.")
+                    LOGGER.info(f"Found Y8I device (as GRAY8) at {infra_dev}. Building combined pipeline.")
                     allocated_devices.append(infra_dev)
                     
+                    # [修正] 此函式現在建立單一的 Y8I-as-GRAY8 管線
                     pipeline_str = self._build_interleaved_infra_pipeline_str(infra_dev)
                     
                     pipeline_obj = GStreamerPipeline(
                         pipeline_str=pipeline_str,
-                        stream_type=StreamType.INFRA1, 
+                        stream_type=StreamType.INFRA1, # 我們將其標記為 INFRA1
                         port=self.config.get_stream_port("infra1")
+                        # 注意：這不是 shell command，所以 is_shell_command=False (預設)
                     )
                     
                     self._launch_pipeline(pipeline_obj)
                     
+                    # 從待處理清單中移除兩者
                     stream_types.remove(StreamType.INFRA1)
                     stream_types.remove(StreamType.INFRA2)
-                    LOGGER.info("Successfully launched interleaved Y8I pipeline for INFRA1 & INFRA2.")
+                    LOGGER.info("Successfully launched Y8I-as-GRAY8 pipeline (for INFRA1 & INFRA2).")
                     launched_at_least_one = True
                     
                 else:
@@ -576,7 +649,7 @@ class GStreamerInterface:
                     all_success = False 
                     
             except Exception as e:
-                LOGGER.error(f"Failed to launch interleaved Y8I pipeline: {e}")
+                LOGGER.error(f"Failed to launch Y8I-as-GRAY8 pipeline: {e}")
                 all_success = False 
                 if StreamType.INFRA1 in stream_types: stream_types.remove(StreamType.INFRA1)
                 if StreamType.INFRA2 in stream_types: stream_types.remove(StreamType.INFRA2)
@@ -628,15 +701,44 @@ class GStreamerInterface:
         for stream_type in stream_types:
             topic = output_topics.get(stream_type)
             callback = callbacks.get(stream_type)
-            pipeline = self.build_receiver_pipeline(stream_type, topic, callback)
+            
+            # [修正] 處理 Y8I 接收端分割
+            if stream_type == StreamType.INFRA1 and StreamType.INFRA2 in stream_types:
+                LOGGER.info("Starting Y8I-as-GRAY8 receiver (splitting INFRA1 and INFRA2)...")
+                
+                # 啟動 INFRA1 (左側)
+                pipeline1 = self.build_receiver_pipeline(stream_type, topic, callback)
+                self._launch_pipeline(pipeline1)
+                
+                # 啟動 INFRA2 (右側)
+                topic2 = output_topics.get(StreamType.INFRA2)
+                callback2 = callbacks.get(StreamType.INFRA2)
+                pipeline2 = self.build_receiver_pipeline(StreamType.INFRA2, topic2, callback2)
+                self._launch_pipeline(pipeline2)
+                
+                # 從清單中移除 INFRA2，因為它已經處理完畢
+                stream_types.remove(StreamType.INFRA2)
+                
+            elif stream_type == StreamType.INFRA2:
+                # 如果 INFRA1 不在清單中，單獨啟動 INFRA2 (可能會失敗)
+                LOGGER.warning("Starting INFRA2 without INFRA1. This assumes a non-Y8I source.")
+                pipeline = self.build_receiver_pipeline(stream_type, topic, callback)
+                self._launch_pipeline(pipeline)
+            else:
+                # 處理所有其他串流 (Color, Depth)
+                pipeline = self.build_receiver_pipeline(stream_type, topic, callback)
+                self._launch_pipeline(pipeline)
 
-            self._launch_pipeline(pipeline)
     
+    # --- [修正] ---
     def _launch_pipeline(self, pipe: GStreamerPipeline):
         """
         Launch a GStreamer pipeline.
         Decides whether to use subprocess (H.264) or PyGObject (LZ4).
         """
+        # Z16/Depth (LZ4) 串流現在使用 PyGObject + v4l2-ctl
+        # H.264 (Color, Infra) 串流使用 PyGObject + v4l2src
+        
         scfg = self._get_stream_config(pipe.stream_type)
         try:
             LOGGER.info(f"Launching {scfg.encoding} pipeline for {pipe.stream_type.value} via PyGObject")
@@ -644,30 +746,86 @@ class GStreamerInterface:
         except Exception as e:
             LOGGER.error(f"Failed to launch {pipe.stream_type.value}: {e}")
             raise
+    
+    # [新增] 輔助函式來監控 v4l2-ctl 的錯誤
+    def _monitor_shell_stderr(self, pipe: GStreamerPipeline):
+        """Monitors stderr of a shell pipeline process for errors."""
+        if not pipe.v4l2_process or not pipe.v4l2_process.stderr:
+            return
+        
+        try:
+            # 讀取 stderr 直到 v4l2-ctl 結束 (這不應該發生，除非出錯)
+            for line in iter(pipe.v4l2_process.stderr.readline, b''):
+                LOGGER.error(f"[v4l2-ctl {pipe.stream_type.value}] {line.decode('utf-8').strip()}")
+                pipe.running = False
+            
+            pipe.v4l2_process.wait()
+            if pipe.running: # 如果它自己終止了，那就有問題
+                LOGGER.error(f"v4l2-ctl process for {pipe.stream_type.value} terminated unexpectedly.")
+                pipe.running = False
 
+        except Exception as e:
+            if pipe.running: # 只有在還在執行時才記錄錯誤
+                LOGGER.error(f"Error monitoring v4l2-ctl stderr: {e}")
+        
     def _launch_pygobject_pipeline(self, pipe: GStreamerPipeline):
         """
         Launches a pipeline within the main GLib context and robustly
         waits for it to enter the PLAYING state.
+        
+        [修正] 此函式現在也處理啟動 v4l2-ctl subprocess
         """
         try:
-            gst_pipe = Gst.parse_launch(pipe.pipeline_str)
+            # --- [修正] 啟動 v4l2-ctl (如果需要) ---
+            if pipe.v4l2_cmd:
+                LOGGER.info(f"Starting v4l2-ctl subprocess for {pipe.stream_type.value}...")
+                v4l2_proc = subprocess.Popen(
+                    pipe.v4l2_cmd.split(), 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    pre_exec_fn=os.setsid # 確保 v4l2-ctl 在自己的 process group
+                )
+                pipe.v4l2_process = v4l2_proc
+                fd = v4l2_proc.stdout.fileno()
+                
+                # 啟動一個執行緒來監控 v4l2-ctl 的 stderr
+                threading.Thread(target=self._monitor_shell_stderr, args=(pipe,), daemon=True).start()
+                
+                gst_pipe = Gst.parse_launch(pipe.pipeline_str)
+                
+                # 將 fdsrc 元素的 'fd' 屬性設定為 v4l2-ctl 的 stdout
+                fdsrc_elem = gst_pipe.get_by_name("src")
+                if not fdsrc_elem:
+                    raise RuntimeError("Could not find 'src' (fdsrc) element in Z16 pipeline")
+                fdsrc_elem.set_property("fd", fd)
+                
+                LOGGER.info(f"fdsrc 'fd' property set to {fd}")
+            
+            else:
+                # 原始邏輯：用於 H.264 (Color, Infra)
+                gst_pipe = Gst.parse_launch(pipe.pipeline_str)
+            # --- [修正結束] ---
+
             pipe.gst_pipeline = gst_pipe
             scfg = self._get_stream_config(pipe.stream_type)
 
             if scfg.encoding == "lz4":
                 if "appsrc" in pipe.pipeline_str:
+                    # (接收端邏輯 - 不變)
                     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
                     pipe.udp_socket = sock
                     self._setup_lz4_receiver(pipe)
                 elif "appsink" in pipe.pipeline_str:
+                    # (傳送端邏輯 - 不變)
                     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
                     pipe.udp_socket = sock
                     self._setup_lz4_sender(pipe)
                 else:
-                    raise RuntimeError("LZ4 pipeline missing appsrc/appsink")
+                    # 只有在 v4l2_cmd 也為空時才引發錯誤 (因為 Z16/fdsrc 管線沒有 appsrc)
+                    if not pipe.v4l2_cmd:
+                        raise RuntimeError("LZ4 pipeline missing appsrc/appsink")
             else:
                 LOGGER.info(f"H.264 pipeline for {pipe.stream_type.value} created.")
 
@@ -703,6 +861,14 @@ class GStreamerInterface:
             LOGGER.error(f"Launch PyGObject failed {pipe.stream_type.value}: {e}")
             if pipe.gst_pipeline:
                  pipe.gst_pipeline.set_state(Gst.State.NULL)
+            
+            # [修正] 確保 v4l2_process 也被終止
+            if pipe.v4l2_process:
+                try:
+                    os.killpg(os.getpgid(pipe.v4l2_process.pid), signal.SIGKILL)
+                except:
+                    pass
+            
             pipe.running = False
             raise
 
@@ -743,7 +909,7 @@ class GStreamerInterface:
             raise RuntimeError("Could not find 'src' element in LZ4 receiver pipeline")
         
         pipeline.udp_socket.bind(("", pipeline.port))
-        pipeline.udp_socket.settimeout(1.0) 
+        pipeline.udp_socket.settimeout(1.0) #
         
         pipeline.socket_thread = threading.Thread(
             target=self._lz4_socket_listener,
@@ -775,6 +941,7 @@ class GStreamerInterface:
         LOGGER.info(f"LZ4 socket listener for port {pipeline.port} stopping.")
 
 
+    # --- [修正] ---
     def stop_pipeline(self, stream_type: StreamType):
         """Stop a specific pipeline with proper cleanup"""
         if stream_type in self.pipelines:
@@ -806,6 +973,22 @@ class GStreamerInterface:
                     LOGGER.info(f"Stopped PyGObject pipeline for {stream_type.value}")
                 except Exception as e:
                     LOGGER.error(f"Error stopping PyGObject pipeline {stream_type.value}: {e}")
+            
+            # [新增] 停止 v4l2-ctl subprocess
+            if pipeline.v4l2_process:
+                LOGGER.info(f"Stopping v4l2-ctl process for {stream_type.value}...")
+                try:
+                    # 殺死整個 process group
+                    os.killpg(os.getpgid(pipeline.v4l2_process.pid), signal.SIGTERM)
+                    pipeline.v4l2_process.wait(timeout=2)
+                    LOGGER.info(f"Stopped v4l2-ctl process for {stream_type.value}")
+                except (ProcessLookupError, PermissionError):
+                    pass # Process already dead
+                except subprocess.TimeoutExpired:
+                    LOGGER.warning(f"v4l2-ctl process {stream_type.value} did not terminate, killing...")
+                    os.killpg(os.getpgid(pipeline.v4l2_process.pid), signal.SIGKILL)
+                except Exception as e:
+                    LOGGER.error(f"Error stopping v4l2-ctl process {stream_type.value}: {e}")
             
             del self.pipelines[stream_type]
     
@@ -845,11 +1028,25 @@ class GStreamerInterface:
                 status[stream_type.value] = False
                 continue
 
-            if pipeline.process: 
-                poll_result = pipeline.process.poll()
-                status[stream_type.value] = (poll_result is None)
-            
-            elif pipeline.gst_pipeline:
+            # [修正] 檢查 v4l2_process 和 gst_pipeline
+            if pipeline.v4l2_process:
+                # 檢查 v4l2-ctl (shell) process
+                poll_result = pipeline.v4l2_process.poll()
+                v4l2_running = (poll_result is None)
+                
+                # 檢查 GStreamer pipeline
+                gst_running = False
+                if pipeline.gst_pipeline:
+                    try:
+                        _, state, _ = pipeline.gst_pipeline.get_state(Gst.CLOCK_TIME_NONE)
+                        gst_running = (state == Gst.State.PLAYING)
+                    except Exception:
+                        gst_running = False
+                
+                status[stream_type.value] = v4l2_running and gst_running
+
+            elif pipeline.gst_pipeline: 
+                # 檢查標準 GObject pipeline
                 try:
                     _, state, _ = pipeline.gst_pipeline.get_state(Gst.CLOCK_TIME_NONE)
                     status[stream_type.value] = (state == Gst.State.PLAYING)
