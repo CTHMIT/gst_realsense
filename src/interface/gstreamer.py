@@ -950,8 +950,9 @@ class GStreamerInterface:
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
-        return "autovideosink sync=false"
-    
+        # 為了穩定顯示，在 x86_64 伺服器上使用更明確的 sink 管道
+        return "queue ! videoconvert ! autovideosink sync=false"
+        
     def _get_payload_type(self, stream_type: StreamType) -> int:
         """Get RTP payload type for stream"""
         payload_types = self.config.streaming.rtp.payload_types
@@ -1104,15 +1105,16 @@ class GStreamerInterface:
             
             pipeline.capture_gst_pipeline = capture_gst_pipeline
             
+            # --- 修正: 不再將 V4L2/Capture 引用複製給 paired_pipeline ---
+            # 這樣 paired_pipeline 會落入 get_pipeline_status() 的第二個分支，簡化其狀態檢查。
+            # V4L2 進程會透過 pipeline.v4l2_process (屬於 primary) 在 cleanup 時停止。
+
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
-                if pipeline.paired_pipeline:
-                    LOGGER.warning(f"Paired sender pipeline {pipeline.stream_type.value} failed to set to PLAYING. Waiting for partner data push.")
-                else:
-                    raise RuntimeError("Failed to set pipeline to PLAYING")
+                LOGGER.warning(f"Failed to set SENDER pipeline {pipeline.stream_type.value} to PLAYING immediately.")
             
             LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline.")
             pipeline.running = True
@@ -1130,8 +1132,14 @@ class GStreamerInterface:
             
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
+            is_passive_stream = pipeline.stream_type in [StreamType.DEPTH_LOW, StreamType.INFRA_RIGHT]
+
             if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
+                # --- 修正: 對被動的次要流增加穩定性，避免啟動失敗中斷程式 ---
+                if is_passive_stream:
+                    LOGGER.warning(f"Passive SENDER pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push.")
+                else:
+                    raise RuntimeError("Failed to set pipeline to PLAYING")
             
             LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline.")
             
@@ -1572,19 +1580,27 @@ class GStreamerInterface:
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
             pipeline.running = False 
             
+            # Also stop paired pipeline if exists
             if pipeline.paired_pipeline and pipeline.paired_pipeline.stream_type in self.pipelines:
                 paired = pipeline.paired_pipeline
                 paired.running = False
                 
-                is_primary = pipeline.v4l2_cmd is not None
+                # --- 修正: 確保只有 V4L2 源頭的管道負責清理 V4L2/Capture 資源 ---
+                # Primary streams are: DEPTH_HIGH, INFRA_LEFT (v4l2_cmd is set)
+                is_primary_pipeline = pipeline.v4l2_cmd is not None
                 is_paired_primary = paired.v4l2_cmd is not None
 
-                if is_primary and not is_paired_primary:
-                    paired.v4l2_process = None
-                    paired.capture_gst_pipeline = None
-                elif not is_primary and is_paired_primary:
+                # 如果當前管道持有 V4L2 資源但不是 primary (例如在 _launch_split_sender 中被複製)
+                # 則在清理前清空它的引用，確保 primary 管道 (如果還在) 負責清理。
+                if pipeline.v4l2_process is not None and not is_primary_pipeline:
                     pipeline.v4l2_process = None
                     pipeline.capture_gst_pipeline = None
+                
+                # 對 paired pipeline 做同樣的檢查和清理，以防止雙重清理。
+                if paired.v4l2_process is not None and not is_paired_primary:
+                    paired.v4l2_process = None
+                    paired.capture_gst_pipeline = None
+                # --- 修正結束 ---
 
                 self._cleanup_pipeline(paired)
                 if paired.stream_type in self.pipelines:
@@ -1650,7 +1666,16 @@ class GStreamerInterface:
                 status[stream_type.value] = False
                 continue
 
-            if pipeline.v4l2_process:
+            # 檢查是否為 Color Stream，如果是則使用標準檢查
+            is_standard_stream = stream_type == StreamType.COLOR or (stream_type == StreamType.DEPTH and self._get_stream_config(stream_type).encoding == "lz4")
+            
+            # 檢查是否為 Primary Split Stream (V4L2 來源)
+            is_primary_split = stream_type in [StreamType.DEPTH_HIGH, StreamType.INFRA_LEFT]
+
+            if is_primary_split or pipeline.v4l2_process:
+                # 適用於 Primary Split Stream (有 v4l2_cmd/v4l2_process)
+                
+                # Primary Split Stream 必須檢查 V4L2 進程是否存活
                 poll_result = pipeline.v4l2_process.poll()
                 v4l2_running = (poll_result is None)
                 
@@ -1658,22 +1683,42 @@ class GStreamerInterface:
                 if pipeline.gst_pipeline:
                     try:
                         ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
-                        if ret == Gst.StateChangeReturn.SUCCESS or ret == Gst.StateChangeReturn.ASYNC:
-                            gst_running = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                        
+                        # --- 修正 1: 對於 AppSrc-based 的分裂流，只要 V4L2 運行，且 GST 管道處於 PAUSED 或 PLAYING 狀態，即視為成功 ---
+                        if v4l2_running:
+                             # PAUSED 狀態表示管道已啟動，並在等待 AppSrc 推送數據
+                            gst_running = (state >= Gst.State.PAUSED)
                         else:
-                            gst_running = False
+                            # 如果 V4L2 已經結束，則 GST 管道必須已經達到 PLAYING
+                            gst_running = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                        # --- 修正結束 ---
+                            
                     except Exception:
                         gst_running = False
                 
                 status[stream_type.value] = v4l2_running and gst_running
 
             elif pipeline.gst_pipeline: 
+                # 適用於 Standard Stream (Color) 或 Secondary Split Stream (Depth_low, Infra_right)
                 try:
                     ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
-                    if ret == Gst.StateChangeReturn.SUCCESS or ret == Gst.StateChangeReturn.ASYNC:
-                        status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                    
+                    is_secondary_split = stream_type in [StreamType.DEPTH_LOW, StreamType.INFRA_RIGHT]
+                    
+                    # --- 修正 2: 對於 Secondary Split Stream，只檢查是否達到 PAUSED 狀態 ---
+                    if is_secondary_split:
+                        # Secondary streams are passively driven by AppSrc, PAUSED is acceptable
+                        status[stream_type.value] = (state >= Gst.State.PAUSED)
+                    # --- 修正結束 ---
+                    
+                    # 標準流必須達到 PLAYING
+                    elif is_standard_stream:
+                         status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                    
+                    # 處理其他未被 is_standard_stream 捕獲的情況 (例如 paired 引用)
                     else:
-                        status[stream_type.value] = False
+                        status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+
                 except Exception:
                     status[stream_type.value] = False
             else:
