@@ -61,6 +61,7 @@ class GStreamerPipeline:
     v4l2_process: Optional[subprocess.Popen] = None
     
     # For depth merge/split
+    capture_gst_pipeline: Optional[Gst.Pipeline] = None
     paired_pipeline: Optional['GStreamerPipeline'] = None
     depth_buffer: Optional[np.ndarray] = None
     last_timestamp: float = 0.0
@@ -1000,50 +1001,83 @@ class GStreamerInterface:
     def _launch_split_sender(self, pipeline: GStreamerPipeline):
         """Launch split sender (depth or Y8I) with v4l2 capture"""
         try:
-            # Only the main pipeline (high/left) has v4l2 process
-            if pipeline.v4l2_cmd:
-                # Start v4l2-ctl process
-                pipeline.v4l2_process = subprocess.Popen(
-                    shlex.split(pipeline.v4l2_cmd),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    preexec_fn=os.setsid
-                )
-                
-                LOGGER.info(f"Started v4l2-ctl for {pipeline.stream_type.value}")
-                time.sleep(0.5)
+            # 1. Start v4l2-ctl process
+            if not pipeline.v4l2_cmd:
+                 raise RuntimeError("Split sender launch called without v4l2_cmd")
             
-            # Create GStreamer pipeline
+            pipeline.v4l2_process = subprocess.Popen(
+                shlex.split(pipeline.v4l2_cmd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            LOGGER.info(f"Started v4l2-ctl for {pipeline.stream_type.value}")
+            time.sleep(0.5)
+
+            # 2. Build the correct CAPTURE pipeline string
+            width = self.config.realsense_camera.width
+            height = self.config.realsense_camera.height
+            fps = self.config.realsense_camera.fps
+            
+            if pipeline.stream_type == StreamType.DEPTH_HIGH:
+                # Depth Capture (Z16)
+                parse_str = f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1"
+            elif pipeline.stream_type == StreamType.INFRA_LEFT:
+                # Y8I Capture (GRAY8 at 2x width)
+                parse_str = f"videoparse width={width} height={height} format=gray8 framerate={fps}/1"
+            else:
+                raise ValueError(f"Invalid split sender type: {pipeline.stream_type}")
+
+            capture_pipeline_str = (
+                f"fdsrc name=src ! "
+                f"queue max-size-buffers=2 ! "
+                f"{parse_str} ! "
+                f"appsink name=sink emit-signals=true sync=false"
+            )
+            
+            capture_gst_pipeline = Gst.parse_launch(capture_pipeline_str)
+            
+            fdsrc = capture_gst_pipeline.get_by_name("src")
+            if fdsrc:
+                fdsrc.set_property("fd", pipeline.v4l2_process.stdout.fileno())
+            else:
+                raise RuntimeError("Could not find 'src' in capture pipeline")
+
+            appsink = capture_gst_pipeline.get_by_name("sink")
+            if not appsink:
+                raise RuntimeError("Could not find 'sink' in capture pipeline")
+
+            if pipeline.stream_type == StreamType.DEPTH_HIGH:
+                appsink.connect("new-sample", self._on_depth_split_sample, pipeline)
+                LOGGER.info("Depth split callback connected to capture pipeline")
+            elif pipeline.stream_type == StreamType.INFRA_LEFT:
+                appsink.connect("new-sample", self._on_y8i_split_sample, pipeline)
+                LOGGER.info("Y8I split callback connected to capture pipeline")
+
+            # 6. Start the CAPTURE pipeline
+            ret = capture_gst_pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to set CAPTURE pipeline to PLAYING")
+            
+            pipeline.capture_gst_pipeline = capture_gst_pipeline
+            
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # If this is the source pipeline (with v4l2), connect fdsrc
-            if pipeline.v4l2_cmd:
-                fdsrc = pipeline.gst_pipeline.get_by_name("src")
-                if fdsrc:
-                    fdsrc.set_property("fd", pipeline.v4l2_process.stdout.fileno())
-                
-                # Setup callback to split and push to paired pipeline
-                if pipeline.stream_type == StreamType.DEPTH_HIGH:
-                    self._setup_depth_split_callback(pipeline)
-                elif pipeline.stream_type == StreamType.INFRA_LEFT:
-                    self._setup_y8i_split_callback(pipeline)
-            
-            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
+                raise RuntimeError("Failed to set SENDER pipeline to PLAYING")
             
             state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
             
             if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started {pipeline.stream_type.value}")
+                LOGGER.info(f"Started {pipeline.stream_type.value} SENDER pipeline")
             
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
             
         except Exception as e:
-            LOGGER.error(f"Launch split sender failed: {e}")
+            LOGGER.error(f"Launch split sender failed: {e}", exc_info=True)
             self._cleanup_pipeline(pipeline)
             raise
     
@@ -1460,17 +1494,24 @@ class GStreamerInterface:
         if pipeline.gst_pipeline:
             pipeline.gst_pipeline.set_state(Gst.State.NULL)
         
+        if hasattr(pipeline, 'capture_gst_pipeline') and pipeline.capture_gst_pipeline:
+            pipeline.capture_gst_pipeline.set_state(Gst.State.NULL)
+            pipeline.capture_gst_pipeline = None
+        
         if pipeline.v4l2_process:
             try:
                 os.killpg(os.getpgid(pipeline.v4l2_process.pid), signal.SIGKILL)
             except:
                 pass
+            pipeline.v4l2_process = None
         
         if pipeline.udp_socket:
             pipeline.udp_socket.close()
+            pipeline.udp_socket = None
         
         if pipeline.socket_thread:
             pipeline.socket_thread.join(timeout=2)
+            pipeline.socket_thread = None
     
     def stop_pipeline(self, stream_type: StreamType):
         """Stop a specific pipeline with proper cleanup"""
