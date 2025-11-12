@@ -51,6 +51,7 @@ class GStreamerPipeline:
     pipeline_str: str
     stream_type: StreamType
     port: int
+    pt: int
     running: bool = False    
     process: Optional[subprocess.Popen] = None    
     gst_pipeline: Optional[Gst.Pipeline] = None
@@ -321,6 +322,9 @@ class GStreamerInterface:
         # Get ports for high and low streams
         high_port = self._get_port(StreamType.DEPTH_HIGH)
         low_port = self._get_port(StreamType.DEPTH_LOW)
+
+        pt_h = self._get_payload_type(StreamType.DEPTH_HIGH) 
+        pt_l = self._get_payload_type(StreamType.DEPTH_LOW)  
         
         device = source_device or self.detect_realsense_device(StreamType.DEPTH)
         if not device:
@@ -372,13 +376,15 @@ class GStreamerInterface:
             pipeline_str=high_pipeline_str,
             stream_type=StreamType.DEPTH_HIGH,
             port=high_port,
+            pt=pt_h,
             v4l2_cmd=v4l2_cmd  # Only high pipeline needs v4l2 process
         )
         
         low_pipeline = GStreamerPipeline(
             pipeline_str=low_pipeline_str,
             stream_type=StreamType.DEPTH_LOW,
-            port=low_port
+            port=low_port,
+            pt=pt_l,
         )
         
         # Link them for coordinated processing
@@ -416,7 +422,8 @@ class GStreamerInterface:
         # Get ports
         left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)
-
+        pt_l = self._get_payload_type(StreamType.INFRA_LEFT) # 100
+        pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) # 101
        
         
         device = source_device or self.detect_realsense_device(StreamType.Y8I_STEREO)
@@ -474,13 +481,15 @@ class GStreamerInterface:
             pipeline_str=left_pipeline_str,
             stream_type=StreamType.INFRA_LEFT,
             port=left_port,
+            pt=pt_l,
             v4l2_cmd=v4l2_cmd  # Only left pipeline needs v4l2 process
         )
         
         right_pipeline = GStreamerPipeline(
             pipeline_str=right_pipeline_str,
             stream_type=StreamType.INFRA_RIGHT,
-            port=right_port
+            port=right_port,
+            pt=pt_r
         )
         
         # Link them
@@ -503,6 +512,7 @@ class GStreamerInterface:
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
+        pt = self._get_payload_type(stream_type)
         
         # For depth with split encoding, redirect to split method
         if stream_type == StreamType.DEPTH and stream_config.encoding != "lz4":
@@ -538,6 +548,7 @@ class GStreamerInterface:
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
                 port=port,
+                pt=pt,
                 v4l2_cmd=v4l2_cmd
             )
 
@@ -551,13 +562,14 @@ class GStreamerInterface:
             
             pipeline_str = f"{source} ! {encoder} ! {protocol}sink host={server_ip} port={port}"
             
-            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}")
+            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
             LOGGER.info(f"Pipeline: {pipeline_str}")
             
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
-                port=port
+                port=port,
+                pt=pt,
             )
     
     # ==================== Depth Merge Receiver ====================
@@ -606,13 +618,15 @@ class GStreamerInterface:
         high_pipeline = GStreamerPipeline(
             pipeline_str=high_pipeline_str,
             stream_type=StreamType.DEPTH_HIGH,
-            port=high_port
+            port=high_port,
+            pt=pt_h
         )
         
         low_pipeline = GStreamerPipeline(
             pipeline_str=low_pipeline_str,
             stream_type=StreamType.DEPTH_LOW,
-            port=low_port
+            port=low_port,
+            pt=pt_l
         )
         
         # Link them
@@ -655,9 +669,6 @@ class GStreamerInterface:
     ) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
         """
         Build receiver pipelines for Y8I from left/right IR streams
-        
-        Returns:
-            (left_pipeline, right_pipeline): Tuple of receiver pipelines
         """
         y8i_width = self.config.realsense_camera.width
         y8i_height = self.config.realsense_camera.height
@@ -666,14 +677,17 @@ class GStreamerInterface:
         left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)
         
+        pt_l = self._get_payload_type(StreamType.INFRA_LEFT) 
+        pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) 
+
         LOGGER.info(f"Building Y8I merge receiver")
-        LOGGER.info(f"  Left IR stream ← port {left_port}")
-        LOGGER.info(f"  Right IR stream ← port {right_port}")
+        LOGGER.info(f"  Left IR stream ← port {left_port} (PT {pt_l})")
+        LOGGER.info(f"  Right IR stream ← port {right_port} (PT {pt_r})")
         
         # Left IR receiver
         left_pipeline_str = self._build_ir_receiver_pipeline(
             port=left_port,
-            payload_type=100,  # Assuming PT 100 for left IR
+            payload_type=pt_l, 
             width=single_ir_width,
             height=y8i_height
         )
@@ -681,7 +695,7 @@ class GStreamerInterface:
         # Right IR receiver
         right_pipeline_str = self._build_ir_receiver_pipeline(
             port=right_port,
-            payload_type=101,  # Assuming PT 101 for right IR
+            payload_type=pt_r, 
             width=single_ir_width,
             height=y8i_height
         )
@@ -689,13 +703,15 @@ class GStreamerInterface:
         left_pipeline = GStreamerPipeline(
             pipeline_str=left_pipeline_str,
             stream_type=StreamType.INFRA_LEFT,
-            port=left_port
+            port=left_port,
+            pt=pt_l
         )
         
         right_pipeline = GStreamerPipeline(
             pipeline_str=right_pipeline_str,
             stream_type=StreamType.INFRA_RIGHT,
-            port=right_port
+            port=right_port,
+            pt=pt_r
         )
         
         # Link them
@@ -741,6 +757,7 @@ class GStreamerInterface:
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
+        pt = self._get_payload_type(stream_type)
         
         if stream_type == StreamType.DEPTH and stream_config.encoding == "lz4":
             width = self.config.realsense_camera.width
@@ -761,7 +778,8 @@ class GStreamerInterface:
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
-                port=port
+                port=port,
+                pt=pt
             )
 
         else:
@@ -771,14 +789,12 @@ class GStreamerInterface:
             
             protocol = self.config.network.transport.protocol
 
-            # === FIX: Get payload type and build caps string here ===
             pt = self._get_payload_type(stream_type)
             caps_str = (
                 f"application/x-rtp,media=video,clock-rate=90000,"
                 f"encoding-name=H264,payload={pt}"
             )
             
-            # === FIX: Apply 'caps' directly to 'udpsrc' ===
             pipeline_str = f"{protocol}src port={port} caps=\"{caps_str}\" ! {decoder} ! {sink}"
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}")
@@ -1597,7 +1613,7 @@ class GStreamerInterface:
             StreamType.COLOR: self.config.get_stream_port("color"),
             StreamType.DEPTH: self.config.get_stream_port("depth"),
             StreamType.DEPTH_HIGH: self.config.get_stream_port("depth"),
-            StreamType.DEPTH_LOW: self.config.get_stream_port("depth") + 5,
+            StreamType.DEPTH_LOW: self.config.get_stream_port("depth") + 1,
             StreamType.INFRA_LEFT: self.config.get_stream_port("infra1"),
             StreamType.INFRA_RIGHT: self.config.get_stream_port("infra2")
         }
