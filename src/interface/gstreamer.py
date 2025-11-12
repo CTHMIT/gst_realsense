@@ -887,31 +887,27 @@ class GStreamerInterface:
             
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
                 bitrate_bps = bitrate * 1000  
+                
                 if stream_type == StreamType.COLOR:
                     color_conversion = (
                         f"nvvidconv ! video/x-raw(memory:NVMM), format=NV12, width={self.config.realsense_camera.width}, height={self.config.realsense_camera.height}, framerate={self.config.realsense_camera.fps}/1 ! "
                     )
-                elif stream_type in [StreamType.DEPTH_HIGH, StreamType.DEPTH_LOW, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT]:
-                    
-                    encoder_element = (
-                        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
-                        f"key-int-max=30"
-                    )
-                
-                if encoder_element is None: 
                     encoder_element = (
                         f"nvv4l2h264enc bitrate={bitrate_bps} "
                         f"insert-sps-pps=true "
                         f"control-rate=1 " 
                         f"profile=4" 
                     )
-                    
-                    if stream_type == StreamType.COLOR:
-                        encoder_element = color_conversion + encoder_element
-                        LOGGER.info("Using hardware encoder with NV12 conversion: nvv4l2h264enc")
-                    else:
-                        LOGGER.info("Using hardware encoder: nvv4l2h264enc")
-            
+                    encoder_element = color_conversion + encoder_element
+                    LOGGER.info("Using hardware encoder with NV12 conversion: nvv4l2h264enc")
+
+                elif stream_type in [StreamType.DEPTH_HIGH, StreamType.DEPTH_LOW, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT]:
+                    LOGGER.info("Falling back non-color stream to software encoder: x264enc")
+                    encoder_element = (
+                        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
+                        f"key-int-max=30"
+                    )
+                
             if encoder_element is None:
                 LOGGER.info("Falling back to software encoder: x264enc")
                 encoder_element = (
@@ -991,13 +987,12 @@ class GStreamerInterface:
         scfg = self._get_stream_config(pipeline.stream_type)
         
         if pipeline.stream_type == StreamType.DEPTH and scfg.encoding == "lz4":
-            # LZ4 depth sender
             self._launch_lz4_sender(pipeline)
         elif pipeline.v4l2_cmd:
-            # Pipeline with v4l2-ctl process (depth split, Y8I split)
             self._launch_split_sender(pipeline)
+        elif pipeline.paired_pipeline:
+            self._launch_standard_sender(pipeline)
         else:
-            # Standard H.264 sender
             self._launch_standard_sender(pipeline)
     
     def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
@@ -1103,7 +1098,6 @@ class GStreamerInterface:
                 appsink.connect("new-sample", self._on_y8i_split_sample, pipeline)
                 LOGGER.info("Y8I split callback connected to capture pipeline")
 
-            # 6. Start the CAPTURE pipeline
             ret = capture_gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set CAPTURE pipeline to PLAYING")
@@ -1115,13 +1109,9 @@ class GStreamerInterface:
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set SENDER pipeline to PLAYING")
+                LOGGER.warning(f"Failed to set SENDER pipeline {pipeline.stream_type.value} to PLAYING immediately.")
             
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started {pipeline.stream_type.value} SENDER pipeline")
-            
+            LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline. Waiting for data.")
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
             
@@ -1140,10 +1130,7 @@ class GStreamerInterface:
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
             
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started {pipeline.stream_type.value}")
+            LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline.")
             
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
