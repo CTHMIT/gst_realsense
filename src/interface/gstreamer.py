@@ -325,6 +325,13 @@ class GStreamerInterface:
 
         pt_h = self._get_payload_type(StreamType.DEPTH_HIGH) 
         pt_l = self._get_payload_type(StreamType.DEPTH_LOW)  
+
+        protocol = self.config.network.transport.protocol
+        server_ip = self.config.network.server.ip
+
+        # 建立 Sinks
+        high_sink = f"{protocol}sink host={server_ip} port={high_port}"
+        low_sink = f"{protocol}sink host={server_ip} port={low_port}"
         
         device = source_device or self.detect_realsense_device(StreamType.DEPTH)
         if not device:
@@ -378,7 +385,8 @@ class GStreamerInterface:
             f"{cpu_nv12_caps_str} ! "                                          
             f"nvvidconv ! "                                                    
             f"{nvmm_caps_str} ! "                                              
-            f"{encoder_high}"
+            f"{encoder_high} ! " 
+            f"{high_sink}"        
         )
         
         # Low byte pipeline
@@ -389,9 +397,9 @@ class GStreamerInterface:
             f"{cpu_nv12_caps_str} ! "
             f"nvvidconv ! "
             f"{nvmm_caps_str} ! "
-            f"{encoder_low}"
+            f"{encoder_low} ! "   
+            f"{low_sink}"
         )
-        
         high_pipeline = GStreamerPipeline(
             pipeline_str=high_pipeline_str,
             stream_type=StreamType.DEPTH_HIGH,
