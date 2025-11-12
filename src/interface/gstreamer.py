@@ -191,6 +191,7 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
         
         stream_config = self._get_stream_config(stream_type)
+
         
         if topic:
             caps = f"video/x-raw,format={stream_config.gstreamer_format},width={width},height={height},framerate={fps}/1"
@@ -201,13 +202,14 @@ class GStreamerInterface:
             if stream_type == StreamType.DEPTH:
                 source_element = (
                     f"v4l2src device={device} io-mode=0 ! "
-                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
+                    f"video/x-raw,format=Z16,width={width},height={height},framerate={fps}/1"
                 )
+        
             else:
                 v4l2_format = stream_config.gstreamer_format
                 
                 if v4l2_format:
-                    gst_format_str = f"format={v4l2_format}"  # Remove .upper() to preserve case
+                    gst_format_str = f"format={v4l2_format}" 
                 else:
                     raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
