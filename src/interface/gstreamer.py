@@ -803,7 +803,8 @@ class GStreamerInterface:
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
-                port=port
+                port=port,
+                pt=pt
             )
     
     # ==================== Helper Methods ====================
