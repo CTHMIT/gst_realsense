@@ -733,9 +733,10 @@ class GStreamerInterface:
             f"encoding-name=H264,payload={payload_type}"
         )
         decoder_element = self._get_decoder_element()
+        latency = self.config.streaming.jitter_buffer.latency
         pipeline_str = (
             f"udpsrc port={port} caps=\"{caps_str}\" ! "
-            f"rtph264depay ! "
+            f"rtpjitterbuffer latency={latency} ! "
             f"h264parse ! "
             f"{decoder_element} ! "
             f"videoconvert ! "
@@ -940,6 +941,7 @@ class GStreamerInterface:
             f"encoding-name=H264,payload={pt}"
         )
         decoder_element = self._get_decoder_element()
+        
         return (
             f"rtph264depay ! "
             f"h264parse ! "
