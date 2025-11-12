@@ -650,8 +650,10 @@ class GStreamerInterface:
 
         decoder_element = self._get_decoder_element()
         latency = self.config.streaming.jitter_buffer.latency
+        receiver_ip = self.config.network.server.ip
+        protocol = self.config.network.transport.protocol
         pipeline_str = (
-            f"udpsrc port={port} caps=\"{caps_str}\" ! "
+            f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
             f"rtph264depay ! "
             f"h264parse ! "
@@ -735,8 +737,10 @@ class GStreamerInterface:
         )
         decoder_element = self._get_decoder_element()
         latency = self.config.streaming.jitter_buffer.latency
+        protocol = self.config.network.transport.protocol
+        receiver_ip = self.config.network.server.ip
         pipeline_str = (
-            f"udpsrc port={port} caps=\"{caps_str}\" ! "
+            f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
             f"rtph264depay ! "
             f"h264parse ! "
@@ -787,10 +791,12 @@ class GStreamerInterface:
 
         else:
             # Standard H.264 receiver
-            decoder = self._build_decoder(stream_type, stream_config)
+            decoder_core = self._build_decoder(stream_type, stream_config) # "h264parse ! nvh264dec"
+            sink = self._build_sink(stream_type)                         # "identity ! xvimagesink"
             latency = self.config.streaming.jitter_buffer.latency
-            sink = self._build_sink(stream_type)
             protocol = self.config.network.transport.protocol
+
+            receiver_ip = self.config.network.server.ip
 
             pt = self._get_payload_type(stream_type)
             caps_str = (
@@ -799,11 +805,13 @@ class GStreamerInterface:
             )
             
             pipeline_str = (
-                f"{protocol}src port={port} caps=\"{caps_str}\" ! "
+                f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! " # address
                 f"rtpjitterbuffer latency={latency} ! "  
-                f"rtph264depay ! "                             
-                f"{decoder} ! "                          
-                f"{sink}"
+                f"rtph264depay ! "                                
+                f"{decoder_core} ! "   # "h264parse ! nvh264dec"
+                f"videoconvert ! "     
+                f"queue ! "            
+                f"{sink}"              # "identity ! xvimagesink"
             )
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
@@ -867,7 +875,7 @@ class GStreamerInterface:
             for decoder in possible_decoders:
                 if Gst.ElementFactory.find(decoder):
                     LOGGER.debug(f"Using hardware decoder: {decoder}")
-                    return decoder
+                    return decoder 
             
             LOGGER.warning(
                 f"config.server.cuda_available is True, but no NVIDIA "
@@ -942,25 +950,20 @@ class GStreamerInterface:
         stream_config: StreamConfig
     ) -> str:
         """
-        Build core decoder element string (from h264parse onwards).
-        It relies on the calling function to handle RTP depayloading (rtph264depay).
+        Build core decoder element string (h264parse -> decoder).
         """
         decoder_element = self._get_decoder_element()
         
         return (
-            "h264parse ! "
-            f"{decoder_element} ! "
-            "videoconvert ! "
-            "queue max-size-buffers=2"
+            f"h264parse ! "
+            f"{decoder_element}"
         )
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
         return (
-            "queue max-size-buffers=10 ! "
-            "videoconvert ! "
             "identity name=monitor silent=false ! "  
-            "xvimagesink sync=false"
+            "glimagesink sync=false"
         )
     
     def _on_bus_message(self, bus, message, pipeline):
