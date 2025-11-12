@@ -597,7 +597,7 @@ class GStreamerInterface:
         
         LOGGER.info(f"Building depth merge receiver: {width}x{height}")
         LOGGER.info(f"  High byte stream ← port {high_port}, pt {pt_h}")
-        LOGGER.info(f"  Low byte stream ← port {low_port}, pt {pt_h}")
+        LOGGER.info(f"  Low byte stream ← port {low_port}, pt {pt_l}")
         
         # High byte receiver
         high_pipeline_str = self._build_8bit_depth_receiver_pipeline(
@@ -797,7 +797,7 @@ class GStreamerInterface:
             
             pipeline_str = f"{protocol}src port={port} caps=\"{caps_str}\" ! {decoder} ! {sink}"
             
-            LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}")
+            LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
             
             return GStreamerPipeline(
