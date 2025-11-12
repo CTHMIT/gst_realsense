@@ -513,7 +513,6 @@ class GStreamerInterface:
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
-            
 
             v4l2_cmd = (
                 f"v4l2-ctl -d {shlex.quote(device)} "
@@ -852,88 +851,56 @@ class GStreamerInterface:
         stream_config: StreamConfig
     ) -> str:
         """Build encoder element string"""
-        enc = (stream_config.encoding or "").lower()
-        if enc not in ("h264", "h265"):
-            raise ValueError(f"Unsupported encoding: {stream_config.encoding}")
-
-        mtu = self.config.streaming.rtp.mtu
-        pt = self._get_payload_type(stream_type)
-        kbps = int(stream_config.bitrate)
-
-        hw = self._try_hardware_encoder(stream_config)  
-
-        def _to_bps(name: str | None, _kbps: int) -> int | int:
-            if name and (name.startswith("nvv4l2") or name.startswith("nvh")):
-                return _kbps * 1000
-            return _kbps
-
-        if hw:
-            if hw == "nvv4l2h264enc" and enc == "h264":
-                bps = _to_bps(hw, kbps)
-                enc_str = (
-                    f"{hw} bitrate={bps} control-rate=2 preset-level=4 "
-                    f"insert-sps-pps=true maxperf-enable=1"
-                )
-                return f"{enc_str} ! h264parse config-interval=1 ! rtph264pay pt={pt} mtu={mtu}"
-
-            if hw == "nvv4l2h265enc" and enc == "h265":
-                bps = _to_bps(hw, kbps)
-                enc_str = (
-                    f"{hw} bitrate={bps} control-rate=2 preset-level=4 "
-                    f"insert-vps-sps-pps=true maxperf-enable=1"
-                )
-                return f"{enc_str} ! h265parse config-interval=1 ! rtph265pay pt={pt} mtu={mtu}"
-
-            if hw.startswith("nvh264") and enc == "h264":
-                bps = _to_bps(hw, kbps)
-                enc_str = f"{hw} bitrate={bps}"
-                return f"{enc_str} ! h264parse config-interval=1 ! rtph264pay pt={pt} mtu={mtu}"
-
-            if hw.startswith("nvh265") and enc == "h265":
-                bps = _to_bps(hw, kbps)
-                enc_str = f"{hw} bitrate={bps}"
-                return f"{enc_str} ! h265parse config-interval=1 ! rtph265pay pt={pt} mtu={mtu}"
-   
-        if enc == "h264":
-            enc_str = (
-                f"x264enc tune=zerolatency speed-preset=ultrafast "
-                f"bitrate={kbps} key-int-max=30"
-            )
-            return f"{enc_str} ! h264parse config-interval=1 ! rtph264pay pt={pt} mtu={mtu}"
-        else:  
-            enc_str = (
-                f"x265enc tune=zerolatency speed-preset=ultrafast "
-                f"bitrate={kbps} key-int-max=30"
-            )
-            return f"{enc_str} ! h265parse config-interval=1 ! rtph265pay pt={pt} mtu={mtu}"
-
-    
-    def _try_hardware_encoder(self, stream_config: StreamConfig) -> Optional[str]:
-        """Try to find an available hardware encoder (nvh264enc or nvv4l2h264enc)"""
+        bitrate = stream_config.bitrate
+        codec = self.config.streaming.rtp.codec
         
-        if not self.config.network.client.nvenc_available:
-            return None
+        encoder_element = None
 
+        if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
+            LOGGER.info("Using hardware encoder: nvv4l2h264enc")
+            bitrate_bps = bitrate * 1000  # nvv4l2h264enc uses bps
+            encoder_element = (
+                f"nvv4l2h264enc bitrate={bitrate_bps} "
+                f"insert-sps-pps=true "
+                f"control-rate=1 " # Constant bitrate
+                f"profile=4" # High profile
+            )
+        
         if stream_config.encoding == "h264":
-            if self.config.network.client.type == "jetson_agx_orin":
-                if Gst.Registry.get().find_element_factory("nvv4l2h264enc"):
-                    LOGGER.info("Using Jetson hardware encoder: nvv4l2h264enc")
-                    return "nvv4l2h264enc"
+            # Try hardware encoder first
+            encoder_element = self._try_hardware_encoder()
             
-            if Gst.Registry.get().find_element_factory("nvh264enc"):
-                LOGGER.info("Using general NVIDIA hardware encoder: nvh264enc")
-                return "nvh264enc"
-
-        elif stream_config.encoding == "h265":
-            if self.config.network.client.type == "jetson_agx_orin":
-                if Gst.Registry.get().find_element_factory("nvv4l2h265enc"):
-                    LOGGER.info("Using Jetson hardware encoder: nvv4l2h265enc")
-                    return "nvv4l2h265enc"
+            if not encoder_element:
+                # Fallback to software encoder
+                encoder_element = (
+                    f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
+                    f"key-int-max=30"
+                )
             
-            if Gst.Registry.get().find_element_factory("nvh265enc"):
-                LOGGER.info("Using general NVIDIA hardware encoder: nvh265enc")
-                return "nvh265enc"
-                
+            # Get payload type
+            pt = self._get_payload_type(stream_type)
+            
+            return (
+                f"{encoder_element} ! "
+                f"h264parse config-interval=1 ! "
+                f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
+            )
+        
+        else:
+            raise ValueError(f"Unsupported encoding: {stream_config.encoding}")
+    
+    def _try_hardware_encoder(self) -> Optional[str]:
+        """Try to detect and use hardware encoder"""
+        # Check for NVIDIA encoder
+        result = subprocess.run(
+            ["gst-inspect-1.0", "nvh264enc"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        if result.returncode == 0:
+            return "nvh264enc preset=low-latency-hq rc-mode=cbr gop-size=30 bframes=0"
+        
         return None
     
     def _build_decoder(
