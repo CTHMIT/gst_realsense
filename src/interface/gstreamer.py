@@ -1608,8 +1608,6 @@ class GStreamerInterface:
     
     def _get_port(self, stream_type: StreamType) -> int:
         """Get port for stream type"""
-        # You may want to define specific ports for split streams in config
-        # For now, use base ports + offset
         base_ports = {
             StreamType.COLOR: self.config.get_stream_port("color"),
             StreamType.DEPTH: self.config.get_stream_port("depth"),
@@ -1644,8 +1642,11 @@ class GStreamerInterface:
                 gst_running = False
                 if pipeline.gst_pipeline:
                     try:
-                        _, state, _ = pipeline.gst_pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                        gst_running = (state == Gst.State.PLAYING)
+                        ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
+                        if ret == Gst.StateChangeReturn.SUCCESS or ret == Gst.StateChangeReturn.ASYNC:
+                            gst_running = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                        else:
+                            gst_running = False
                     except Exception:
                         gst_running = False
                 
@@ -1653,8 +1654,11 @@ class GStreamerInterface:
 
             elif pipeline.gst_pipeline: 
                 try:
-                    _, state, _ = pipeline.gst_pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                    status[stream_type.value] = (state == Gst.State.PLAYING)
+                    ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
+                    if ret == Gst.StateChangeReturn.SUCCESS or ret == Gst.StateChangeReturn.ASYNC:
+                        status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
+                    else:
+                        status[stream_type.value] = False
                 except Exception:
                     status[stream_type.value] = False
             else:
