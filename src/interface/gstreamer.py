@@ -1670,12 +1670,13 @@ class GStreamerInterface:
                 y8i_data, y8i_width, y8i_height, mode=self.y8i_mode
             )
             
-            left_appsrc = pipeline.gst_pipeline.get_by_name("src")
-            if left_appsrc:
-                left_buffer = Gst.Buffer.new_wrapped(left_ir.tobytes())
-                left_buffer.pts = timestamp
-                left_appsrc.push_buffer(left_buffer)
-            
+            if pipeline.gst_pipeline:
+                left_appsrc = pipeline.gst_pipeline.get_by_name("src")
+                if left_appsrc:
+                    left_buffer = Gst.Buffer.new_wrapped(left_ir.tobytes())
+                    left_buffer.pts = timestamp
+                    left_appsrc.push_buffer(left_buffer)
+
             if pipeline.paired_pipeline and pipeline.paired_pipeline.gst_pipeline:
                 right_appsrc = pipeline.paired_pipeline.gst_pipeline.get_by_name("src")
                 if right_appsrc:
