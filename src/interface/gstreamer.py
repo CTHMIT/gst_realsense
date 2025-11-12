@@ -909,26 +909,32 @@ class GStreamerInterface:
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
                 bitrate_bps = bitrate * 1000  
                 
+                encoder_element_core = (
+                    f"nvv4l2h264enc bitrate={bitrate_bps} "
+                    f"insert-sps-pps=true "
+                    f"control-rate=1 " 
+                    f"profile=4" # 4=High, 2=Baseline
+                )
+                
                 if stream_type == StreamType.COLOR:
                     color_conversion = (
-                        f"nvvidconv ! video/x-raw(memory:NVMM), format=NV12, width={self.config.realsense_camera.width}, height={self.config.realsense_camera.height}, framerate={self.config.realsense_camera.fps}/1 ! "
+                        f"nvvidconv ! "
+                        f"video/x-raw(memory:NVMM),format=NV12,"
+                        f"width={self.config.realsense_camera.width},"
+                        f"height={self.config.realsense_camera.height},"
+                        f"framerate={self.config.realsense_camera.fps}/1 ! "
                     )
-                    encoder_element = (
-                        f"nvv4l2h264enc bitrate={bitrate_bps} "
-                        f"insert-sps-pps=true "
-                        f"control-rate=1 " 
-                        f"profile=4" 
-                    )
-                    encoder_element = color_conversion + encoder_element
-                    LOGGER.info("Using hardware encoder with NV12 conversion: nvv4l2h264enc")
+                    encoder_element = color_conversion + encoder_element_core
+                    LOGGER.info(f"Using HW encoder for COLOR: nvv4l2h264enc")
 
                 elif stream_type in [StreamType.DEPTH_HIGH, StreamType.DEPTH_LOW, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT]:
-                    LOGGER.info("Falling back non-color stream to software encoder: x264enc")
-                    encoder_element = (
-                        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
-                        f"key-int-max=30"
-                    )
+                    encoder_element = encoder_element_core
+                    LOGGER.info(f"Using HW encoder for GRAY8 stream ({stream_type.value}): nvv4l2h264enc")
                 
+                else:
+                    LOGGER.warning(f"Unknown stream type {stream_type} for HW encoder, falling back.")
+                    encoder_element = None 
+
             if encoder_element is None:
                 LOGGER.info("Falling back to software encoder: x264enc")
                 encoder_element = (
