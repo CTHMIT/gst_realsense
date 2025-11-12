@@ -627,12 +627,14 @@ class GStreamerInterface:
             f"application/x-rtp,media=video,clock-rate=90000,"
             f"encoding-name=H264,payload={payload_type}"
         )
+
+        decoder_element = self._get_decoder_element()
         
         pipeline_str = (
             f"udpsrc port={port} caps=\"{caps_str}\" ! "
             f"rtph264depay ! "
             f"h264parse ! "
-            f"avdec_h264 ! "
+            f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
@@ -708,12 +710,12 @@ class GStreamerInterface:
             f"application/x-rtp,media=video,clock-rate=90000,"
             f"encoding-name=H264,payload={payload_type}"
         )
-        
+        decoder_element = self._get_decoder_element()
         pipeline_str = (
             f"udpsrc port={port} caps=\"{caps_str}\" ! "
             f"rtph264depay ! "
             f"h264parse ! "
-            f"avdec_h264 ! "
+            f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
@@ -820,6 +822,16 @@ class GStreamerInterface:
             f"queue max-size-buffers=2"
         )
     
+    def _get_decoder_element(self) -> str:
+        """Get the appropriate H.264 decoder element based on config"""
+        if self.config.network.server.cuda_available:
+            # You could add a gst-inspect check here, but trusting config is simpler
+            LOGGER.debug("Using hardware decoder: nvv4l2h264dec")
+            return "nvv4l2h264dec"
+        else:
+            LOGGER.debug("Using software decoder: avdec_h264")
+            return "avdec_h264"
+    
     def _build_encoder(
         self,
         stream_type: StreamType,
@@ -890,11 +902,11 @@ class GStreamerInterface:
             f"application/x-rtp,media=video,clock-rate=90000,"
             f"encoding-name=H264,payload={pt}"
         )
-        
+        decoder_element = self._get_decoder_element()
         return (
             f"rtph264depay ! "
             f"h264parse ! "
-            f"avdec_h264 ! "
+            f"{decoder_element} ! "
             f"videoconvert ! "
             f"queue max-size-buffers=2"
         )
