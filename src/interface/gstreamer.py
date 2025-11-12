@@ -362,7 +362,7 @@ class GStreamerInterface:
         high_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
-            f"videoconvert ! "
+            f"nvvidconv ! "
             f"{encoder_high}"
         )
         
@@ -370,7 +370,7 @@ class GStreamerInterface:
         low_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
-            f"videoconvert ! "
+            f"nvvidconv ! "
             f"{encoder_low}"
         )
         
@@ -469,7 +469,7 @@ class GStreamerInterface:
         left_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
-            f"videoconvert ! "
+            f"nvvidconv ! "
             f"{encoder_left}"
         )
         
@@ -477,7 +477,7 @@ class GStreamerInterface:
         right_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
-            f"videoconvert ! "
+            f"nvvidconv ! "
             f"{encoder_right}"
         )
         
@@ -662,7 +662,7 @@ class GStreamerInterface:
             f"rtph264depay ! "
             f"h264parse ! "
             f"{decoder_element} ! "
-            f"videoconvert ! "
+            f"nvvidconv ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
         )
