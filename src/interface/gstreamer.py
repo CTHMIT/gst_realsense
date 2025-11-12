@@ -948,11 +948,10 @@ class GStreamerInterface:
         decoder_element = self._get_decoder_element()
         
         return (
-            f"h264parse ! "
-            f"video/x-h264, stream-format=byte-stream, alignment=au, parsed=true ! " 
+            "h264parse ! "
             f"{decoder_element} ! "
-            f"videoconvert ! "
-            f"queue max-size-buffers=2"
+            "videoconvert ! "
+            "queue max-size-buffers=2"
         )
     
     def _build_sink(self, stream_type: StreamType) -> str:
@@ -961,7 +960,7 @@ class GStreamerInterface:
             "queue max-size-buffers=10 ! "
             "videoconvert ! "
             "identity name=monitor silent=false ! "  
-            "autovideosink sync=false"
+            "xvimagesink sync=false"
         )
     
     def _on_bus_message(self, bus, message, pipeline):
