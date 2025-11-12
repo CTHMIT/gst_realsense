@@ -1255,31 +1255,31 @@ class GStreamerInterface:
             self._launch_standard_receiver(pipeline)
     
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
-        """Launch LZ4 depth receiver"""
-        try:
-            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            
-            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
-            self._setup_lz4_receiver(pipeline)
-            
-            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-            
-            if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
-            
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
-            
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            
-        except Exception as e:
-            LOGGER.error(f"Launch LZ4 receiver failed: {e}")
-            self._cleanup_pipeline(pipeline)
-            raise
+            """Launch LZ4 depth receiver"""
+            try:
+                pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                
+                pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
+                
+                pipeline.running = True
+                self.pipelines[pipeline.stream_type] = pipeline
+
+                self._setup_lz4_receiver(pipeline) 
+                
+                ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
+                
+                if ret == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError("Failed to set pipeline to PLAYING")
+                
+                state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+                
+                if state == Gst.State.PLAYING:
+                    LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
+                
+            except Exception as e:
+                LOGGER.error(f"Launch LZ4 receiver failed: {e}")
+                self._cleanup_pipeline(pipeline)
+                raise
     
     def _launch_depth_merge_receiver(self, pipeline: GStreamerPipeline):
         """Launch depth merge receiver (high or low byte)"""

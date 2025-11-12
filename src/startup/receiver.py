@@ -298,7 +298,7 @@ Examples:
         "--depth-mode",
         type=str,
         choices=["split", "lz4", "single"],
-        default="split",
+        default="lz4",
         help="Depth reception mode (default: split)"
     )
     mode_group.add_argument(
