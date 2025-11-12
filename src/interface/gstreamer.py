@@ -787,9 +787,8 @@ class GStreamerInterface:
             if not device:
                 raise RuntimeError(f"Could not find device for {stream_type.value}")
         
-        stream_config = self._get_stream_config(stream_type)
-        width = stream_config.width or self.config.realsense_camera.width
-        height = stream_config.height or self.config.realsense_camera.height
+        width = self.config.realsense_camera.width
+        height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
         format_map = {
