@@ -479,7 +479,7 @@ class GStreamerInterface:
 
         source = (
             f"v4l2src device={device} io-mode=0 ! "
-            f"video/x-raw,format='Y8I ',width={w},height={h},framerate={fps}/1 ! "
+            f"video/x-raw,format=(string)Y8I ,width={w},height={h},framerate={fps}/1 ! "
             "deinterleave name=d"
         )
         
