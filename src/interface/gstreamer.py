@@ -20,6 +20,8 @@ import numpy as np
 import gi
 import shlex 
 import os 
+import struct
+import collections
 
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0') 
@@ -162,6 +164,79 @@ class Y8ISplitter:
             raise ValueError(f"Unknown Y8I split mode: {mode}")
         
         return left_ir, right_ir
+
+
+
+class LZ4FrameReassembler:
+    """
+    Handles reassembly of chunked LZ4 frames received over UDP.
+    """
+    def __init__(self, max_buffer_size=10):
+        self.buffer = collections.OrderedDict()
+        self.max_buffer_size = max_buffer_size #
+        self.latest_full_frame_id = -1
+        
+        self.HEADER_FORMAT = "!IHH" 
+        self.HEADER_SIZE = struct.calcsize(self.HEADER_FORMAT)
+
+    def add_chunk(self, packet: bytes) -> Optional[bytes]:
+        """
+        Adds a new UDP packet (chunk) to the reassembly buffer.
+        
+        If a frame is completed, it returns the full compressed data
+        and cleans up the buffer for that frame.
+        
+        Returns:
+            Full compressed frame data (bytes) if complete, else None.
+        """
+        try:
+            header = packet[:self.HEADER_SIZE]
+            data = packet[self.HEADER_SIZE:]
+            
+            frame_id, chunk_index, total_chunks = struct.unpack(self.HEADER_FORMAT, header)
+
+            if frame_id <= self.latest_full_frame_id:
+                return None
+
+            if frame_id not in self.buffer:
+                self.buffer[frame_id] = {
+                    'total_chunks': total_chunks,
+                    'chunks_received': 0,
+                    'data_chunks': {}
+                }
+            
+            frame = self.buffer[frame_id]
+            
+            if chunk_index not in frame['data_chunks']:
+                frame['data_chunks'][chunk_index] = data
+                frame['chunks_received'] += 1
+
+            if frame['chunks_received'] == frame['total_chunks']:
+                self.latest_full_frame_id = frame_id
+                
+                full_compressed_data = b"".join([
+                    frame['data_chunks'][i] for i in range(frame['total_chunks'])
+                ])
+                
+                del self.buffer[frame_id]
+                
+                self._cleanup_buffer()
+                
+                return full_compressed_data
+                
+        except Exception as e:
+            LOGGER.warning(f"LZ4 Reassembler error: {e}")
+            
+        return None
+
+    def _cleanup_buffer(self):
+        """Remove old, incomplete frames from the buffer."""
+        old_keys = [k for k in self.buffer.keys() if k < self.latest_full_frame_id]
+        for k in old_keys:
+            del self.buffer[k]
+            
+        while len(self.buffer) > self.max_buffer_size:
+            self.buffer.popitem(last=False)
 
 
 class DepthMergeProcessor:
@@ -1255,31 +1330,37 @@ class GStreamerInterface:
             self._launch_standard_receiver(pipeline)
     
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
-            """Launch LZ4 depth receiver"""
-            try:
-                pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                
-                pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-                
-                pipeline.running = True
-                self.pipelines[pipeline.stream_type] = pipeline
-
-                self._setup_lz4_receiver(pipeline) 
-                
-                ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-                
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    raise RuntimeError("Failed to set pipeline to PLAYING")
-                
-                state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-                
-                if state == Gst.State.PLAYING:
-                    LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
-                
-            except Exception as e:
-                LOGGER.error(f"Launch LZ4 receiver failed: {e}")
-                self._cleanup_pipeline(pipeline)
-                raise
+        """Launch LZ4 depth receiver"""
+        try:
+            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            
+            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
+            
+            appsrc = pipeline.gst_pipeline.get_by_name("src")
+            if not appsrc:
+                raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
+            
+            reassembler = LZ4FrameReassembler()
+            
+            pipeline.running = True
+            self.pipelines[pipeline.stream_type] = pipeline
+            
+            self._setup_lz4_receiver(pipeline, appsrc, reassembler)
+            
+            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
+            
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to set pipeline to PLAYING")
+            
+            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+            
+            if state == Gst.State.PLAYING:
+                LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
+            
+        except Exception as e:
+            LOGGER.error(f"Launch LZ4 receiver failed: {e}")
+            self._cleanup_pipeline(pipeline)
+            raise
     
     def _launch_depth_merge_receiver(self, pipeline: GStreamerPipeline):
         """Launch depth merge receiver (high or low byte)"""
@@ -1434,24 +1515,64 @@ class GStreamerInterface:
         LOGGER.info(f"LZ4 Sender: appsink callback connected for port {pipeline.port}")
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
-        """Callback for new sample from appsink (LZ4 Sender)"""
+        """
+        Callback for new sample from appsink (LZ4 Sender)
+        Manually splits large LZ4 frame into smaller chunks with headers.
+        """
         sample = appsink.pull_sample()
-        if sample:
-            buffer = sample.get_buffer()
-            try:
-                success, map_info = buffer.map(Gst.MapFlags.READ)
-                if success:
-                    raw_data = map_info.data
-                    
-                    compressed_data = lz4.frame.compress(raw_data)
-                    
+        if not sample:
+            return Gst.FlowReturn.OK
+
+        buffer = sample.get_buffer()
+        try:
+            success, map_info = buffer.map(Gst.MapFlags.READ)
+            if not success:
+                LOGGER.warning("LZ4 Sender: Failed to map buffer")
+                return Gst.FlowReturn.OK
+
+            raw_data = map_info.data
+            
+            compressed_data = lz4.frame.compress(raw_data)
+            
+            if not hasattr(self, '_lz4_frame_id'):
+                self._lz4_frame_id = 0
+            
+            self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF # 32-bit frame ID
+            frame_id = self._lz4_frame_id
+            
+            data_len = len(compressed_data)
+            
+            CHUNK_SIZE = 60 * 1024 
+            
+            total_chunks = (data_len + CHUNK_SIZE - 1) // CHUNK_SIZE
+            
+            HEADER_FORMAT = "!IHH" 
+            HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+            
+            data_to_send_size = CHUNK_SIZE - HEADER_SIZE
+            
+            for i in range(total_chunks):
+                chunk_index = i
+                
+                header = struct.pack(HEADER_FORMAT, frame_id, chunk_index, total_chunks)
+                
+                start = i * data_to_send_size
+                end = min((i + 1) * data_to_send_size, data_len)
+                data_chunk = compressed_data[start:end]
+                
+                try:
                     pipeline.udp_socket.sendto(
-                        compressed_data,
+                        header + data_chunk,
                         (self.config.network.server.ip, pipeline.port)
                     )
-                buffer.unmap(map_info)
-            except Exception as e:
-                LOGGER.warning(f"LZ4 compression/send error: {e}")
+                except Exception as e:
+                    LOGGER.warning(f"LZ4 chunk send error: {e}")
+            
+        except Exception as e:
+            LOGGER.warning(f"LZ4 compression/chunk error: {e}")
+        finally:
+            buffer.unmap(map_info)
+            
         return Gst.FlowReturn.OK
     
     def _setup_depth_split_callback(self, pipeline: GStreamerPipeline):
@@ -1570,9 +1691,9 @@ class GStreamerInterface:
         
         return Gst.FlowReturn.OK
     
-    def _setup_lz4_receiver(self, pipeline: GStreamerPipeline):
+    def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """Configure LZ4 receiver socket listener thread"""
-        appsrc = pipeline.gst_pipeline.get_by_name("src")
+        
         if not appsrc:
             raise RuntimeError("Could not find 'src' element in LZ4 receiver pipeline")
         
@@ -1581,25 +1702,31 @@ class GStreamerInterface:
         
         pipeline.socket_thread = threading.Thread(
             target=self._lz4_socket_listener,
-            args=(pipeline,),
+            args=(pipeline, appsrc, reassembler),
             daemon=True
         )
         pipeline.socket_thread.start()
         LOGGER.info(f"LZ4 Receiver: Socket listener started on port {pipeline.port}")
 
-    def _lz4_socket_listener(self, pipeline: GStreamerPipeline):
-        """Thread function to listen on UDP socket and push to appsrc (LZ4 Receiver)"""
-        appsrc: Gst.Element = pipeline.gst_pipeline.get_by_name("src")
+    def _lz4_socket_listener(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
+        """
+        Thread function to listen on UDP socket, reassemble chunks, 
+        and push full frames to appsrc (LZ4 Receiver)
+        """
         
         while pipeline.running:
             try:
-                compressed_data, _ = pipeline.udp_socket.recvfrom(65536)
+                packet_data, _ = pipeline.udp_socket.recvfrom(65536)
                 
-                decompressed_data = lz4.frame.decompress(compressed_data)
+                full_compressed_data = reassembler.add_chunk(packet_data)
                 
-                gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
-                
-                appsrc.push_buffer(gst_buffer)
+                if full_compressed_data:
+                    
+                    decompressed_data = lz4.frame.decompress(full_compressed_data)
+                    
+                    gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
+                    
+                    GLib.idle_add(appsrc.push_buffer, gst_buffer)
                 
             except socket.timeout:
                 continue 
