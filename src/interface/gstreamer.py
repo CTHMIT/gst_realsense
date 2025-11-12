@@ -993,7 +993,6 @@ class GStreamerInterface:
             
             return (
                 f"{encoder_element} ! "
-                f"h264parse config-interval=1 ! "
                 f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
             )
         
