@@ -416,6 +416,8 @@ class GStreamerInterface:
         # Get ports
         left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)
+
+       
         
         device = source_device or self.detect_realsense_device(StreamType.Y8I_STEREO)
         if not device:
@@ -550,7 +552,7 @@ class GStreamerInterface:
             pipeline_str = f"{source} ! {encoder} ! {protocol}sink host={server_ip} port={port}"
             
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}")
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
+            LOGGER.info(f"Pipeline: {pipeline_str}")
             
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
@@ -574,18 +576,21 @@ class GStreamerInterface:
         
         high_port = self._get_port(StreamType.DEPTH_HIGH)
         low_port = self._get_port(StreamType.DEPTH_LOW)
-        
+
+        pt_h = self._get_payload_type(StreamType.DEPTH_HIGH)
+        pt_l = self._get_payload_type(StreamType.DEPTH_LOW)
+
         # Initialize merger
         self.depth_merger = DepthMergeProcessor(width, height)
         
         LOGGER.info(f"Building depth merge receiver: {width}x{height}")
-        LOGGER.info(f"  High byte stream ← port {high_port}")
-        LOGGER.info(f"  Low byte stream ← port {low_port}")
+        LOGGER.info(f"  High byte stream ← port {high_port} x pt {pt_h}")
+        LOGGER.info(f"  Low byte stream ← port {low_port} x pt {pt_h}")
         
         # High byte receiver
         high_pipeline_str = self._build_8bit_depth_receiver_pipeline(
             port=high_port,
-            payload_type=96,  # Assuming PT 96 for high byte
+            payload_type=pt_h,  
             width=width,
             height=height
         )
@@ -593,7 +598,7 @@ class GStreamerInterface:
         # Low byte receiver
         low_pipeline_str = self._build_8bit_depth_receiver_pipeline(
             port=low_port,
-            payload_type=97,  # Assuming PT 97 for low byte
+            payload_type=pt_l,  
             width=width,
             height=height
         )
@@ -1592,7 +1597,7 @@ class GStreamerInterface:
             StreamType.COLOR: self.config.get_stream_port("color"),
             StreamType.DEPTH: self.config.get_stream_port("depth"),
             StreamType.DEPTH_HIGH: self.config.get_stream_port("depth"),
-            StreamType.DEPTH_LOW: self.config.get_stream_port("depth") + 1,
+            StreamType.DEPTH_LOW: self.config.get_stream_port("depth") + 5,
             StreamType.INFRA_LEFT: self.config.get_stream_port("infra1"),
             StreamType.INFRA_RIGHT: self.config.get_stream_port("infra2")
         }
