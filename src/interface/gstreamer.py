@@ -354,6 +354,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
             f"{encoder_high}"
         )
         
@@ -362,6 +363,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
             f"{encoder_low}"
         )
         
@@ -452,6 +454,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
             f"{encoder_left}"
         )
         
@@ -460,6 +463,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
             f"queue max-size-buffers=2 ! "
+            f"videoconvert ! "
             f"{encoder_right}"
         )
         
