@@ -331,8 +331,8 @@ class GStreamerInterface:
             raise RuntimeError("Could not find depth device")
         
         LOGGER.info(f"Building depth split sender: {width}x{height}@{fps}fps")
-        LOGGER.info(f"  High byte stream → port {high_port}")
-        LOGGER.info(f"  Low byte stream → port {low_port}")
+        LOGGER.info(f"  High byte stream → port {high_port}, pt {pt_h}")
+        LOGGER.info(f"  Low byte stream → port {low_port}, pt {pt_l}")
         
         # V4L2 command to capture Z16 depth
         v4l2_cmd = (
@@ -432,8 +432,8 @@ class GStreamerInterface:
         
         LOGGER.info(f"Building Y8I split sender: {y8i_width}x{y8i_height}@{fps}fps (mode: {split_mode})")
         LOGGER.info(f"  Single IR: {single_ir_width}x{y8i_height}")
-        LOGGER.info(f"  Left IR stream → port {left_port}")
-        LOGGER.info(f"  Right IR stream → port {right_port}")
+        LOGGER.info(f"  Left IR stream → port {left_port}, pt {pt_l}")
+        LOGGER.info(f"  Right IR stream → port {right_port}, pt {pt_r}")
         
         # V4L2 command to capture Y8I
         v4l2_cmd = (
@@ -596,8 +596,8 @@ class GStreamerInterface:
         self.depth_merger = DepthMergeProcessor(width, height)
         
         LOGGER.info(f"Building depth merge receiver: {width}x{height}")
-        LOGGER.info(f"  High byte stream ← port {high_port} x pt {pt_h}")
-        LOGGER.info(f"  Low byte stream ← port {low_port} x pt {pt_h}")
+        LOGGER.info(f"  High byte stream ← port {high_port}, pt {pt_h}")
+        LOGGER.info(f"  Low byte stream ← port {low_port}, pt {pt_h}")
         
         # High byte receiver
         high_pipeline_str = self._build_8bit_depth_receiver_pipeline(
@@ -681,8 +681,8 @@ class GStreamerInterface:
         pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) 
 
         LOGGER.info(f"Building Y8I merge receiver")
-        LOGGER.info(f"  Left IR stream ← port {left_port} (PT {pt_l})")
-        LOGGER.info(f"  Right IR stream ← port {right_port} (PT {pt_r})")
+        LOGGER.info(f"  Left IR stream ← port {left_port}, pt {pt_l}")
+        LOGGER.info(f"  Right IR stream ← port {right_port}, pt {pt_r}")
         
         # Left IR receiver
         left_pipeline_str = self._build_ir_receiver_pipeline(
