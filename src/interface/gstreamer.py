@@ -566,7 +566,7 @@ class GStreamerInterface:
 
         # 1. videoconvert CPU 
         cpu_nv12_caps_str = (
-            f"video/x-raw,format=NV12"
+            f"video/x-raw,format=NV12,"
             f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
 
