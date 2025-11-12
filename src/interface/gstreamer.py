@@ -350,14 +350,18 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
         
+        caps_str = (
+            f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+        )
+        
         # Create encoder configs
         encoder_high = self._build_encoder(StreamType.DEPTH_HIGH, depth_config)
         encoder_low = self._build_encoder(StreamType.DEPTH_LOW, depth_config)
         
         # High byte pipeline (will be fed via appsrc after split)
         high_pipeline_str = (
-            f"appsrc name=src format=time is-live=true ! "
-            f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
+            # 將 caps 直接設定在 appsrc 上，並移除舊的 capsfilter
+            f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
             f"{encoder_high}"
@@ -365,8 +369,8 @@ class GStreamerInterface:
         
         # Low byte pipeline (will be fed via appsrc after split)
         low_pipeline_str = (
-            f"appsrc name=src format=time is-live=true ! "
-            f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
+            # 將 caps 直接設定在 appsrc 上，並移除舊的 capsfilter
+            f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"videoconvert ! "
             f"{encoder_low}"
