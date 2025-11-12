@@ -3,6 +3,7 @@ RealSense D435i Camera Streaming Configuration
 Using Pydantic and Pydantic-Settings for type-safe configuration management
 """
 
+import yaml
 from typing import List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -159,7 +160,6 @@ class StreamingConfigManager(BaseSettings):
     @classmethod
     def from_yaml(cls, yaml_path: Union[str, Path] = "src/config/config.yaml") -> "StreamingConfigManager":
         """Load configuration from YAML file"""
-        import yaml
         
         yaml_path = Path(yaml_path)
         if not yaml_path.exists():
