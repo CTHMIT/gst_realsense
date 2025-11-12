@@ -197,18 +197,17 @@ class GStreamerInterface:
             return f"ros2src topic={topic} ! {caps}"
         
         else:
-            # For depth stream, use Z16 from camera and convert to GRAY16_LE
+            # For depth stream, request GRAY16_LE directly (v4l2 driver handles Z16->GRAY16_LE)
             if stream_type == StreamType.DEPTH:
                 source_element = (
                     f"v4l2src device={device} io-mode=0 ! "
-                    f"video/x-raw,format=Z16,width={width},height={height},framerate={fps}/1 ! "
-                    f"videoconvert ! video/x-raw,format=GRAY16_LE"
+                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
                 )
             else:
                 v4l2_format = stream_config.gstreamer_format
                 
                 if v4l2_format:
-                    gst_format_str = f"format={v4l2_format.upper()}"
+                    gst_format_str = f"format={v4l2_format}"  # Remove .upper() to preserve case
                 else:
                     raise ValueError(f"gstreamer_format not defined for {stream_type.value}")
 
@@ -479,9 +478,9 @@ class GStreamerInterface:
         Builds a single GStreamer pipeline string that reads from a Y8I (interleaved)
         source, deinterleaves it, and encodes/sends both infra1 and infra2.
         """
-        w = self.config.realsense_camera.width  # 640
-        h = self.config.realsense_camera.height # 480
-        fps = self.config.realsense_camera.fps # 30
+        w = self.config.realsense_camera.width 
+        h = self.config.realsense_camera.height 
+        fps = self.config.realsense_camera.fps 
         
         out_w = w
         out_h = h // 2 
@@ -489,7 +488,7 @@ class GStreamerInterface:
         source = (
             f"v4l2src device={device} io-mode=0 ! "
             f"video/x-raw,format=Y8I,width={w},height={h},framerate={fps}/1 ! "
-            "deinterleave name=d"
+            "deinterleave name=d keep-positions=true"  #
         )
         
         scfg1 = self._get_stream_config(StreamType.INFRA1)
