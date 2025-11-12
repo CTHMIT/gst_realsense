@@ -941,18 +941,15 @@ class GStreamerInterface:
         stream_type: StreamType,
         stream_config: StreamConfig
     ) -> str:
-        """Build decoder element string"""
-        pt = self._get_payload_type(stream_type)
-        
-        caps_str = (
-            f"application/x-rtp,media=video,clock-rate=90000,"
-            f"encoding-name=H264,payload={pt}"
-        )
+        """
+        Build core decoder element string (from h264parse onwards).
+        It relies on the calling function to handle RTP depayloading (rtph264depay).
+        """
         decoder_element = self._get_decoder_element()
         
         return (
-            f"rtph264depay ! "
             f"h264parse ! "
+            f"video/x-h264, stream-format=byte-stream, alignment=au, parsed=true ! " 
             f"{decoder_element} ! "
             f"videoconvert ! "
             f"queue max-size-buffers=2"
