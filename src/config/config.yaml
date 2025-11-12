@@ -71,7 +71,7 @@ streaming:
     tune: "zerolatency"
     speed: "ultrafast"
     bitrate: 8000
-    mtu: 1800 
+    mtu: 1500 
     config_interval: 1
     payload_types:
       color: 96
