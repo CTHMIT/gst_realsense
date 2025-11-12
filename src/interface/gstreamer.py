@@ -451,6 +451,10 @@ class GStreamerInterface:
         right_port = self._get_port(StreamType.INFRA_RIGHT)
         pt_l = self._get_payload_type(StreamType.INFRA_LEFT) # 100
         pt_r = self._get_payload_type(StreamType.INFRA_RIGHT) # 101
+        protocol = self.config.network.transport.protocol
+        server_ip = self.config.network.server.ip
+
+        # Sinks
         left_sink = f"{protocol}sink host={server_ip} port={left_port}"
         right_sink = f"{protocol}sink host={server_ip} port={right_port}"
         
