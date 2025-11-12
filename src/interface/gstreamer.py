@@ -874,32 +874,46 @@ class GStreamerInterface:
     ) -> str:
         """Build encoder element string"""
         bitrate = stream_config.bitrate
-        codec = self.config.streaming.rtp.codec
-        
-        encoder_element = None
+        codec = self.config.streaming.rtp.codec # nvv4l2h264enc
 
-        if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
-            LOGGER.info("Using hardware encoder: nvv4l2h264enc")
-            bitrate_bps = bitrate * 1000  # nvv4l2h264enc uses bps
-            encoder_element = (
-                f"nvv4l2h264enc bitrate={bitrate_bps} "
-                f"insert-sps-pps=true "
-                f"control-rate=1 " # Constant bitrate
-                f"profile=4" # High profile
-            )
-        
         if stream_config.encoding == "h264":
-            # Try hardware encoder first
-            encoder_element = self._try_hardware_encoder()
             
-            if not encoder_element:
-                # Fallback to software encoder
+            encoder_element = None
+            
+            if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
+                bitrate_bps = bitrate * 1000  
+                if stream_type == StreamType.COLOR:
+                    color_conversion = (
+                        f"nvvidconv ! video/x-raw(memory:NVMM), format=NV12, width={self.config.realsense_camera.width}, height={self.config.realsense_camera.height}, framerate={self.config.realsense_camera.fps}/1 ! "
+                    )
+                elif stream_type in [StreamType.DEPTH_HIGH, StreamType.DEPTH_LOW, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT]:
+                    
+                    encoder_element = (
+                        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
+                        f"key-int-max=30"
+                    )
+                
+                if encoder_element is None: 
+                    encoder_element = (
+                        f"nvv4l2h264enc bitrate={bitrate_bps} "
+                        f"insert-sps-pps=true "
+                        f"control-rate=1 " 
+                        f"profile=4" 
+                    )
+                    
+                    if stream_type == StreamType.COLOR:
+                        encoder_element = color_conversion + encoder_element
+                        LOGGER.info("Using hardware encoder with NV12 conversion: nvv4l2h264enc")
+                    else:
+                        LOGGER.info("Using hardware encoder: nvv4l2h264enc")
+            
+            if encoder_element is None:
+                LOGGER.info("Falling back to software encoder: x264enc")
                 encoder_element = (
                     f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
                     f"key-int-max=30"
                 )
-            
-            # Get payload type
+
             pt = self._get_payload_type(stream_type)
             
             return (
@@ -910,20 +924,7 @@ class GStreamerInterface:
         
         else:
             raise ValueError(f"Unsupported encoding: {stream_config.encoding}")
-    
-    def _try_hardware_encoder(self) -> Optional[str]:
-        """Try to detect and use hardware encoder"""
-        # Check for NVIDIA encoder
-        result = subprocess.run(
-            ["gst-inspect-1.0", "nvh264enc"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        
-        if result.returncode == 0:
-            return "nvh264enc preset=low-latency-hq rc-mode=cbr gop-size=30 bframes=0"
-        
-        return None
+
     
     def _build_decoder(
         self,
