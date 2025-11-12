@@ -204,16 +204,16 @@ def main():
     # Determine streams
     stream_types = []
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.INFRA1, StreamType.INFRA2, StreamType.DEPTH]
+        stream_types = [StreamType.COLOR, StreamType.INFRA_LEFT, StreamType.INFRA_RIGHT, StreamType.DEPTH]
     else:
         if args.color:
             stream_types.append(StreamType.COLOR)
         if args.depth:
             stream_types.append(StreamType.DEPTH)
         if args.infra1:
-            stream_types.append(StreamType.INFRA1)
+            stream_types.append(StreamType.INFRA_LEFT)
         if args.infra2:
-            stream_types.append(StreamType.INFRA2)
+            stream_types.append(StreamType.INFRA_RIGHT)
     
     if not stream_types:
         LOGGER.error("No streams selected! Use --all or specify individual streams")
@@ -225,10 +225,10 @@ def main():
         source_topics[StreamType.COLOR] = args.color_topic
     if args.depth_topic and StreamType.DEPTH in stream_types:
         source_topics[StreamType.DEPTH] = args.depth_topic
-    if args.infra1_topic and StreamType.INFRA1 in stream_types:
-        source_topics[StreamType.INFRA1] = args.infra1_topic
-    if args.infra2_topic and StreamType.INFRA2 in stream_types:
-        source_topics[StreamType.INFRA2] = args.infra2_topic
+    if args.infra1_topic and StreamType.INFRA_LEFT in stream_types:
+        source_topics[StreamType.INFRA_LEFT] = args.infra1_topic
+    if args.infra2_topic and StreamType.INFRA_RIGHT in stream_types:
+        source_topics[StreamType.INFRA_RIGHT] = args.infra2_topic
     
     # Create and start sender
     try:
