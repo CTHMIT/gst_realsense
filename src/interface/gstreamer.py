@@ -17,23 +17,25 @@ import socket
 import lz4.frame
 import time  
 import numpy as np
-import gi
 import shlex 
 import os 
 import struct
 import collections
 
+import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0') 
 from gi.repository import Gst, GLib, GstApp
-from interface.config import StreamingConfigManager, StreamConfig
-from utils.logger import LOGGER
 
 Gst.init(None)
 g_main_loop = GLib.MainLoop()
 g_main_loop_thread = threading.Thread(target=g_main_loop.run, daemon=True)
 g_main_loop_thread.start()
+from interface.config import StreamingConfigManager, StreamConfig
+from utils.logger import LOGGER
+
 LOGGER.info("GLib MainLoop thread started")
+
 
 
 class StreamType(Enum):
@@ -774,7 +776,7 @@ class GStreamerInterface:
             f"encoding-name=H264,payload={payload_type}"
         )
 
-        decoder_element = self._get_decoder_element()
+        decoder_element = "avdec_h264"
         latency = self.config.streaming.jitter_buffer.latency
         receiver_ip = self.config.network.server.ip
         protocol = self.config.network.transport.protocol
@@ -786,7 +788,9 @@ class GStreamerInterface:
             f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
-            f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
+            f"tee name=t ! "
+            f"queue ! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false "
+            f"t. ! queue ! glimagesink sync=false"
         )
         
         return pipeline_str
@@ -861,10 +865,11 @@ class GStreamerInterface:
             f"application/x-rtp,media=video,clock-rate=90000,"
             f"encoding-name=H264,payload={payload_type}"
         )
-        decoder_element = self._get_decoder_element()
+        decoder_element = "avdec_h264"
         latency = self.config.streaming.jitter_buffer.latency
         protocol = self.config.network.transport.protocol
         receiver_ip = self.config.network.server.ip
+
         pipeline_str = (
             f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
@@ -873,7 +878,9 @@ class GStreamerInterface:
             f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
-            f"appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
+            f"tee name=t ! "
+            f"queue ! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false "
+            f"t. ! queue ! glimagesink sync=false"
         )
         
         return pipeline_str
