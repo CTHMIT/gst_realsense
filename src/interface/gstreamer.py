@@ -354,6 +354,12 @@ class GStreamerInterface:
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
         )
         
+        # nvvidconv 
+        nvmm_caps_str = (
+            f"video/x-raw(memory:NVMM),format=NV12,"
+            f"width={width},height={height},framerate={fps}/1"
+        )
+
         # Create encoder configs
         encoder_high = self._build_encoder(StreamType.DEPTH_HIGH, depth_config)
         encoder_low = self._build_encoder(StreamType.DEPTH_LOW, depth_config)
@@ -363,6 +369,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "  
             f"{encoder_high}"
         )
         
@@ -371,6 +378,7 @@ class GStreamerInterface:
             f"appsrc name=src format=time is-live=true caps=\"{caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "  
             f"{encoder_low}"
         )
         
@@ -379,7 +387,7 @@ class GStreamerInterface:
             stream_type=StreamType.DEPTH_HIGH,
             port=high_port,
             pt=pt_h,
-            v4l2_cmd=v4l2_cmd  # Only high pipeline needs v4l2 process
+            v4l2_cmd=v4l2_cmd  
         )
         
         low_pipeline = GStreamerPipeline(
@@ -453,8 +461,22 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
         
+        base_pipeline = (
+            f"fdsrc name=src ! "
+            f"queue max-size-buffers=2 ! "
+            f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
+            f"appsink name=sink emit-signals=true sync=false"
+        )
+    
+        # appsrc
         ir_caps_str = (
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
+        )
+
+        # nvvidconv 
+        nvmm_caps_str = (
+            f"video/x-raw(memory:NVMM),format=NV12,"
+            f"width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
 
         # Get stream configs
@@ -465,19 +487,19 @@ class GStreamerInterface:
         encoder_left = self._build_encoder(StreamType.INFRA_LEFT, left_config)
         encoder_right = self._build_encoder(StreamType.INFRA_RIGHT, right_config)
         
-        # Left IR pipeline (fed via appsrc after split)
         left_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "  
             f"{encoder_left}"
         )
         
-        # Right IR pipeline (fed via appsrc after split)
         right_pipeline_str = (
             f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
             f"queue max-size-buffers=2 ! "
             f"nvvidconv ! "
+            f"{nvmm_caps_str} ! "  
             f"{encoder_right}"
         )
         
@@ -486,7 +508,7 @@ class GStreamerInterface:
             stream_type=StreamType.INFRA_LEFT,
             port=left_port,
             pt=pt_l,
-            v4l2_cmd=v4l2_cmd  # Only left pipeline needs v4l2 process
+            v4l2_cmd=v4l2_cmd  
         )
         
         right_pipeline = GStreamerPipeline(
@@ -496,13 +518,11 @@ class GStreamerInterface:
             pt=pt_r
         )
         
-        # Link them
         left_pipeline.paired_pipeline = right_pipeline
         right_pipeline.paired_pipeline = left_pipeline
         
         return left_pipeline, right_pipeline
     
-    # ==================== Original Sender Pipeline (for reference) ====================
     
     def build_sender_pipeline(
         self, 
