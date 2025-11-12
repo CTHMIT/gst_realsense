@@ -788,7 +788,6 @@ class GStreamerInterface:
         else:
             # Standard H.264 receiver
             decoder = self._build_decoder(stream_type, stream_config)
-            sink = self._build_sink(stream_type)
             latency = self.config.streaming.jitter_buffer.latency
             sink = self._build_sink(stream_type)
             protocol = self.config.network.transport.protocol
@@ -802,7 +801,8 @@ class GStreamerInterface:
             pipeline_str = (
                 f"{protocol}src port={port} caps=\"{caps_str}\" ! "
                 f"rtpjitterbuffer latency={latency} ! "  
-                f"{decoder} ! " 
+                f"rtph264depay ! "                             
+                f"{decoder} ! "                          
                 f"{sink}"
             )
             
