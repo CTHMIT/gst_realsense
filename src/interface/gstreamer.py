@@ -707,7 +707,6 @@ class GStreamerInterface:
             f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
             f"rtph264depay ! "
-            f"h264parse ! "
             f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
@@ -794,7 +793,6 @@ class GStreamerInterface:
             f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
             f"rtph264depay ! "
-            f"h264parse ! "
             f"{decoder_element} ! "
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
@@ -1011,10 +1009,7 @@ class GStreamerInterface:
         """
         decoder_element = self._get_decoder_element()
         
-        return (
-            f"h264parse ! "
-            f"{decoder_element}"
-        )
+        return decoder_element
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
