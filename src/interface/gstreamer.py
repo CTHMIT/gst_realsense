@@ -827,6 +827,19 @@ class GStreamerInterface:
     ) -> str:
         """Build encoder element string"""
         bitrate = stream_config.bitrate
+        codec = self.config.streaming.rtp.codec
+        
+        encoder_element = None
+
+        if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
+            LOGGER.debug("Using hardware encoder: nvv4l2h264enc")
+            bitrate_bps = bitrate * 1000  # nvv4l2h264enc uses bps
+            encoder_element = (
+                f"nvv4l2h264enc bitrate={bitrate_bps} "
+                f"insert-sps-pps=true "
+                f"control-rate=1 " # Constant bitrate
+                f"profile=4" # High profile
+            )
         
         if stream_config.encoding == "h264":
             # Try hardware encoder first
