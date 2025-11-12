@@ -783,7 +783,6 @@ class GStreamerInterface:
                     pipe.v4l2_cmd.split(), 
                     stdout=subprocess.PIPE, 
                     stderr=subprocess.PIPE,
-                    pre_exec_fn=os.setsid # 確保 v4l2-ctl 在自己的 process group
                 )
                 pipe.v4l2_process = v4l2_proc
                 fd = v4l2_proc.stdout.fileno()
@@ -978,15 +977,14 @@ class GStreamerInterface:
             if pipeline.v4l2_process:
                 LOGGER.info(f"Stopping v4l2-ctl process for {stream_type.value}...")
                 try:
-                    # 殺死整個 process group
-                    os.killpg(os.getpgid(pipeline.v4l2_process.pid), signal.SIGTERM)
+                    pipeline.v4l2_process.terminate()
                     pipeline.v4l2_process.wait(timeout=2)
                     LOGGER.info(f"Stopped v4l2-ctl process for {stream_type.value}")
                 except (ProcessLookupError, PermissionError):
                     pass # Process already dead
                 except subprocess.TimeoutExpired:
                     LOGGER.warning(f"v4l2-ctl process {stream_type.value} did not terminate, killing...")
-                    os.killpg(os.getpgid(pipeline.v4l2_process.pid), signal.SIGKILL)
+                    pipeline.v4l2_process.kill()
                 except Exception as e:
                     LOGGER.error(f"Error stopping v4l2-ctl process {stream_type.value}: {e}")
             
