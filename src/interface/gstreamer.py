@@ -838,10 +838,15 @@ class GStreamerInterface:
         
         gst_format = format_map.get(stream_type, "YUY2")
         
+        if stream_type == StreamType.COLOR and self.config.network.client.nvenc_available:
+            converter = ""
+        else:
+            converter = "videoconvert !"
+        
         return (
             f"v4l2src device={device} ! "
             f"video/x-raw,format={gst_format},width={width},height={height},framerate={fps}/1 ! "
-            f"videoconvert ! "
+            f"{converter} "  
             f"queue max-size-buffers=2"
         )
     
