@@ -649,9 +649,10 @@ class GStreamerInterface:
         )
 
         decoder_element = self._get_decoder_element()
-        
+        latency = self.config.streaming.jitter_buffer.latency
         pipeline_str = (
             f"udpsrc port={port} caps=\"{caps_str}\" ! "
+            f"rtpjitterbuffer latency={latency} ! "
             f"rtph264depay ! "
             f"h264parse ! "
             f"{decoder_element} ! "
@@ -737,6 +738,7 @@ class GStreamerInterface:
         pipeline_str = (
             f"udpsrc port={port} caps=\"{caps_str}\" ! "
             f"rtpjitterbuffer latency={latency} ! "
+            f"rtph264depay ! "
             f"h264parse ! "
             f"{decoder_element} ! "
             f"videoconvert ! "
@@ -787,7 +789,8 @@ class GStreamerInterface:
             # Standard H.264 receiver
             decoder = self._build_decoder(stream_type, stream_config)
             sink = self._build_sink(stream_type)
-            
+            latency = self.config.streaming.jitter_buffer.latency
+            sink = self._build_sink(stream_type)
             protocol = self.config.network.transport.protocol
 
             pt = self._get_payload_type(stream_type)
@@ -796,7 +799,12 @@ class GStreamerInterface:
                 f"encoding-name=H264,payload={pt}"
             )
             
-            pipeline_str = f"{protocol}src port={port} caps=\"{caps_str}\" ! {decoder} ! {sink}"
+            pipeline_str = (
+                f"{protocol}src port={port} caps=\"{caps_str}\" ! "
+                f"rtpjitterbuffer latency={latency} ! "  
+                f"{decoder} ! " 
+                f"{sink}"
+            )
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
