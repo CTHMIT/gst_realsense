@@ -1434,11 +1434,12 @@ class GStreamerInterface:
             # Split into high and low bytes
             high_byte, low_byte = DepthSplitter.split_depth(depth_16bit)
             
-            high_appsrc = pipeline.gst_pipeline.get_by_name("src")
-            if high_appsrc:
-                high_buffer = Gst.Buffer.new_wrapped(high_byte.tobytes())
-                high_buffer.pts = timestamp
-                high_appsrc.push_buffer(high_buffer)
+            if pipeline.gst_pipeline:
+                high_appsrc = pipeline.gst_pipeline.get_by_name("src")
+                if high_appsrc:
+                    high_buffer = Gst.Buffer.new_wrapped(high_byte.tobytes())
+                    high_buffer.pts = timestamp
+                    high_appsrc.push_buffer(high_buffer)
             
             if pipeline.paired_pipeline and pipeline.paired_pipeline.gst_pipeline:
                 low_appsrc = pipeline.paired_pipeline.gst_pipeline.get_by_name("src")
