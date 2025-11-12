@@ -230,8 +230,6 @@ class GStreamerInterface:
         if self.config.streaming.rtp.mtu > self.config.network.transport.mtu:
             LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
     
-    # ==================== Device Detection ====================
-    
     def detect_realsense_device(
         self, 
         stream_type: StreamType,
@@ -259,7 +257,6 @@ class GStreamerInterface:
                 if device in exclude_devices: 
                     continue
                     
-                # Check if RealSense device
                 try:
                     info_result = subprocess.run(
                         ["v4l2-ctl", "--device", device, "--info"],
@@ -274,7 +271,6 @@ class GStreamerInterface:
                     if "RealSense" not in info_result.stdout and "Intel" not in info_result.stdout:
                         continue
                     
-                    # Check formats
                     fmt_result = subprocess.run(
                         ["v4l2-ctl", "--device", device, "--list-formats-ext"],
                         capture_output=True,
@@ -302,8 +298,6 @@ class GStreamerInterface:
         
         return None
     
-    # ==================== Depth Split Sender ====================
-    
     def build_depth_split_sender_pipeline(
         self,
         source_device: Optional[str] = None
@@ -319,7 +313,6 @@ class GStreamerInterface:
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
-        # Get ports for high and low streams
         high_port = self._get_port(StreamType.DEPTH_HIGH)
         low_port = self._get_port(StreamType.DEPTH_LOW)
 
@@ -334,7 +327,6 @@ class GStreamerInterface:
         LOGGER.info(f"  High byte stream → port {high_port}, pt {pt_h}")
         LOGGER.info(f"  Low byte stream → port {low_port}, pt {pt_l}")
         
-        # V4L2 command to capture Z16 depth
         v4l2_cmd = (
             f"v4l2-ctl -d {shlex.quote(device)} "
             f"--set-fmt-video=width={width},height={height},pixelformat='Z16 ' "
@@ -342,7 +334,6 @@ class GStreamerInterface:
             f"--stream-mmap --stream-count=0 --stream-to=-"
         )
         
-        # Common pipeline for reading Z16 and splitting
         base_pipeline = (
             f"fdsrc name=src ! "
             f"queue max-size-buffers=2 ! "
@@ -350,11 +341,9 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
         
-        # Create encoder configs
         encoder_high = self._build_encoder(StreamType.DEPTH_HIGH, depth_config)
         encoder_low = self._build_encoder(StreamType.DEPTH_LOW, depth_config)
         
-        # High byte pipeline (will be fed via appsrc after split)
         high_pipeline_str = (
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
@@ -363,7 +352,6 @@ class GStreamerInterface:
             f"{encoder_high}"
         )
         
-        # Low byte pipeline (will be fed via appsrc after split)
         low_pipeline_str = (
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1 ! "
@@ -377,7 +365,7 @@ class GStreamerInterface:
             stream_type=StreamType.DEPTH_HIGH,
             port=high_port,
             pt=pt_h,
-            v4l2_cmd=v4l2_cmd  # Only high pipeline needs v4l2 process
+            v4l2_cmd=v4l2_cmd 
         )
         
         low_pipeline = GStreamerPipeline(
@@ -387,13 +375,10 @@ class GStreamerInterface:
             pt=pt_l,
         )
         
-        # Link them for coordinated processing
         high_pipeline.paired_pipeline = low_pipeline
         low_pipeline.paired_pipeline = high_pipeline
         
         return high_pipeline, low_pipeline
-    
-    # ==================== Y8I Stereo Split Sender ====================
     
     def build_y8i_split_sender_pipeline(
         self,
@@ -435,7 +420,6 @@ class GStreamerInterface:
         LOGGER.info(f"  Left IR stream → port {left_port}, pt {pt_l}")
         LOGGER.info(f"  Right IR stream → port {right_port}, pt {pt_r}")
         
-        # V4L2 command to capture Y8I
         v4l2_cmd = (
             f"v4l2-ctl -d {shlex.quote(device)} "
             f"--set-fmt-video=width={y8i_width},height={y8i_height},pixelformat='Y8I ' "
@@ -443,7 +427,6 @@ class GStreamerInterface:
             f"--stream-mmap --stream-count=0 --stream-to=-"
         )
         
-        # Base pipeline for reading Y8I
         base_pipeline = (
             f"fdsrc name=src ! "
             f"queue max-size-buffers=2 ! "
@@ -451,15 +434,12 @@ class GStreamerInterface:
             f"appsink name=sink emit-signals=true sync=false"
         )
         
-        # Get stream configs
         left_config = self._get_stream_config(StreamType.INFRA_LEFT)
         right_config = self._get_stream_config(StreamType.INFRA_RIGHT)
         
-        # Create encoders
         encoder_left = self._build_encoder(StreamType.INFRA_LEFT, left_config)
         encoder_right = self._build_encoder(StreamType.INFRA_RIGHT, right_config)
         
-        # Left IR pipeline (fed via appsrc after split)
         left_pipeline_str = (
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
@@ -468,7 +448,6 @@ class GStreamerInterface:
             f"{encoder_left}"
         )
         
-        # Right IR pipeline (fed via appsrc after split)
         right_pipeline_str = (
             f"appsrc name=src format=time is-live=true ! "
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1 ! "
@@ -482,7 +461,7 @@ class GStreamerInterface:
             stream_type=StreamType.INFRA_LEFT,
             port=left_port,
             pt=pt_l,
-            v4l2_cmd=v4l2_cmd  # Only left pipeline needs v4l2 process
+            v4l2_cmd=v4l2_cmd  
         )
         
         right_pipeline = GStreamerPipeline(
@@ -492,13 +471,10 @@ class GStreamerInterface:
             pt=pt_r
         )
         
-        # Link them
         left_pipeline.paired_pipeline = right_pipeline
         right_pipeline.paired_pipeline = left_pipeline
         
         return left_pipeline, right_pipeline
-    
-    # ==================== Original Sender Pipeline (for reference) ====================
     
     def build_sender_pipeline(
         self, 
@@ -514,7 +490,6 @@ class GStreamerInterface:
         port = self._get_port(stream_type)
         pt = self._get_payload_type(stream_type)
         
-        # For depth with split encoding, redirect to split method
         if stream_type == StreamType.DEPTH and stream_config.encoding != "lz4":
             LOGGER.warning("Use build_depth_split_sender_pipeline() for H.264 depth encoding")
         
@@ -553,7 +528,6 @@ class GStreamerInterface:
             )
 
         else:
-            # Standard H.264 pipeline for color, single infra
             source = self._build_source(stream_type, source_device, source_topic)
             encoder = self._build_encoder(stream_type, stream_config)
             
@@ -571,8 +545,6 @@ class GStreamerInterface:
                 port=port,
                 pt=pt,
             )
-    
-    # ==================== Depth Merge Receiver ====================
     
     def build_depth_merge_receiver_pipeline(
         self
@@ -592,14 +564,12 @@ class GStreamerInterface:
         pt_h = self._get_payload_type(StreamType.DEPTH_HIGH)
         pt_l = self._get_payload_type(StreamType.DEPTH_LOW)
 
-        # Initialize merger
         self.depth_merger = DepthMergeProcessor(width, height)
         
         LOGGER.info(f"Building depth merge receiver: {width}x{height}")
         LOGGER.info(f"  High byte stream ← port {high_port}, pt {pt_h}")
         LOGGER.info(f"  Low byte stream ← port {low_port}, pt {pt_l}")
         
-        # High byte receiver
         high_pipeline_str = self._build_8bit_depth_receiver_pipeline(
             port=high_port,
             payload_type=pt_h,  
@@ -607,7 +577,6 @@ class GStreamerInterface:
             height=height
         )
         
-        # Low byte receiver
         low_pipeline_str = self._build_8bit_depth_receiver_pipeline(
             port=low_port,
             payload_type=pt_l,  
@@ -629,7 +598,6 @@ class GStreamerInterface:
             pt=pt_l
         )
         
-        # Link them
         high_pipeline.paired_pipeline = low_pipeline
         low_pipeline.paired_pipeline = high_pipeline
         
@@ -662,8 +630,6 @@ class GStreamerInterface:
         
         return pipeline_str
     
-    # ==================== Y8I Merge Receiver ====================
-    
     def build_y8i_merge_receiver_pipeline(
         self
     ) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
@@ -684,7 +650,6 @@ class GStreamerInterface:
         LOGGER.info(f"  Left IR stream ← port {left_port}, pt {pt_l}")
         LOGGER.info(f"  Right IR stream ← port {right_port}, pt {pt_r}")
         
-        # Left IR receiver
         left_pipeline_str = self._build_ir_receiver_pipeline(
             port=left_port,
             payload_type=pt_l, 
@@ -692,7 +657,6 @@ class GStreamerInterface:
             height=y8i_height
         )
         
-        # Right IR receiver
         right_pipeline_str = self._build_ir_receiver_pipeline(
             port=right_port,
             payload_type=pt_r, 
@@ -713,8 +677,7 @@ class GStreamerInterface:
             port=right_port,
             pt=pt_r
         )
-        
-        # Link them
+    
         left_pipeline.paired_pipeline = right_pipeline
         right_pipeline.paired_pipeline = left_pipeline
         
@@ -744,8 +707,6 @@ class GStreamerInterface:
         )
         
         return pipeline_str
-    
-    # ==================== Original Receiver Pipeline ====================
     
     def build_receiver_pipeline(
         self,
@@ -783,7 +744,6 @@ class GStreamerInterface:
             )
 
         else:
-            # Standard H.264 receiver
             decoder = self._build_decoder(stream_type, stream_config)
             sink = self._build_sink(stream_type)
             
@@ -807,8 +767,6 @@ class GStreamerInterface:
                 pt=pt
             )
     
-    # ==================== Helper Methods ====================
-    
     def _build_source(
         self,
         stream_type: StreamType,
@@ -817,7 +775,6 @@ class GStreamerInterface:
     ) -> str:
         """Build source element string"""
         if topic:
-            # ROS2 topic source (not implemented here)
             raise NotImplementedError("ROS2 topic source not implemented")
         
         if not device:
@@ -879,7 +836,7 @@ class GStreamerInterface:
     ) -> str:
         """Build encoder element string"""
         bitrate = stream_config.bitrate
-        codec = self.config.streaming.rtp.codec # nvv4l2h264enc
+        codec = self.config.streaming.rtp.codec 
 
         if stream_config.encoding == "h264":
             
@@ -950,7 +907,6 @@ class GStreamerInterface:
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
-        # 為了穩定顯示，在 x86_64 伺服器上使用更明確的 sink 管道
         return "queue ! videoconvert ! autovideosink sync=false"
         
     def _get_payload_type(self, stream_type: StreamType) -> int:
@@ -978,8 +934,6 @@ class GStreamerInterface:
                        f"Using default 96.")
         return 96
     
-    # ==================== Launch Methods ====================
-    
     def launch_sender_pipeline(
         self,
         pipeline: GStreamerPipeline
@@ -999,35 +953,28 @@ class GStreamerInterface:
     def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth sender"""
         try:
-            # Create UDP socket
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             
-            # Start v4l2-ctl process
             pipeline.v4l2_process = subprocess.Popen(
-                shlex.split(pipeline.v4l2_cmd),
+                shlex.s(pipeline.v4l2_cmd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 preexec_fn=os.setsid
             )
             
-            # Create GStreamer pipeline
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # Get fdsrc and connect to v4l2 stdout
             fdsrc = pipeline.gst_pipeline.get_by_name("src")
             if fdsrc:
                 fdsrc.set_property("fd", pipeline.v4l2_process.stdout.fileno())
             
-            # Setup appsink callback for LZ4 compression
             self._setup_lz4_sender(pipeline)
             
-            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
             
-            # Wait for state change
             state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
             
             if state == Gst.State.PLAYING:
@@ -1046,7 +993,6 @@ class GStreamerInterface:
     def _launch_split_sender(self, pipeline: GStreamerPipeline):
         """Launch split sender (depth or Y8I) with v4l2 capture"""
         try:
-            # 1. Start v4l2-ctl process
             if not pipeline.v4l2_cmd:
                  raise RuntimeError("Split sender launch called without v4l2_cmd")
             
@@ -1059,16 +1005,13 @@ class GStreamerInterface:
             LOGGER.info(f"Started v4l2-ctl for {pipeline.stream_type.value}")
             time.sleep(0.5)
 
-            # 2. Build the correct CAPTURE pipeline string
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
             
             if pipeline.stream_type == StreamType.DEPTH_HIGH:
-                # Depth Capture (Z16)
                 parse_str = f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1"
             elif pipeline.stream_type == StreamType.INFRA_LEFT:
-                # Y8I Capture (GRAY8 at 2x width)
                 parse_str = f"videoparse width={width} height={height} format=gray8 framerate={fps}/1"
             else:
                 raise ValueError(f"Invalid split sender type: {pipeline.stream_type}")
@@ -1104,10 +1047,6 @@ class GStreamerInterface:
                 raise RuntimeError("Failed to set CAPTURE pipeline to PLAYING")
             
             pipeline.capture_gst_pipeline = capture_gst_pipeline
-            
-            # --- 修正: 不再將 V4L2/Capture 引用複製給 paired_pipeline ---
-            # 這樣 paired_pipeline 會落入 get_pipeline_status() 的第二個分支，簡化其狀態檢查。
-            # V4L2 進程會透過 pipeline.v4l2_process (屬於 primary) 在 cleanup 時停止。
 
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
@@ -1135,7 +1074,6 @@ class GStreamerInterface:
             is_passive_stream = pipeline.stream_type in [StreamType.DEPTH_LOW, StreamType.INFRA_RIGHT]
 
             if ret == Gst.StateChangeReturn.FAILURE:
-                # --- 修正: 對被動的次要流增加穩定性，避免啟動失敗中斷程式 ---
                 if is_passive_stream:
                     LOGGER.warning(f"Passive SENDER pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push.")
                 else:
@@ -1170,16 +1108,12 @@ class GStreamerInterface:
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth receiver"""
         try:
-            # Create UDP socket
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             
-            # Create GStreamer pipeline
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # Setup socket listener
             self._setup_lz4_receiver(pipeline)
             
-            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
@@ -1203,12 +1137,10 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # Setup appsink callback for merging
             appsink = pipeline.gst_pipeline.get_by_name("sink")
             if appsink:
                 appsink.connect("new-sample", self._on_depth_byte_sample, pipeline)
             
-            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
@@ -1232,12 +1164,10 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # Setup appsink callback for display/processing
             appsink = pipeline.gst_pipeline.get_by_name("sink")
             if appsink:
                 appsink.connect("new-sample", self._on_ir_sample, pipeline)
             
-            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
@@ -1278,8 +1208,6 @@ class GStreamerInterface:
             LOGGER.error(f"Launch standard receiver failed: {e}")
             self._cleanup_pipeline(pipeline)
             raise
-    
-    # ==================== Callback Methods ====================
     
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
@@ -1338,13 +1266,11 @@ class GStreamerInterface:
             return Gst.FlowReturn.ERROR
         
         try:
-            # Convert to numpy array
             depth_16bit = np.frombuffer(map_info.data, dtype=np.uint16)
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             depth_16bit = depth_16bit.reshape((height, width))
             
-            # Split into high and low bytes
             high_byte, low_byte = DepthSplitter.split_depth(depth_16bit)
             
             high_appsrc = pipeline.gst_pipeline.get_by_name("src")
@@ -1394,13 +1320,11 @@ class GStreamerInterface:
             return Gst.FlowReturn.ERROR
         
         try:
-            # Convert to numpy array
             y8i_width = self.config.realsense_camera.width
             y8i_height = self.config.realsense_camera.height
             y8i_data = np.frombuffer(map_info.data, dtype=np.uint8)
             y8i_data = y8i_data.reshape((y8i_height, y8i_width))
             
-            # Split into left and right
             left_ir, right_ir = Y8ISplitter.split_y8i(
                 y8i_data, y8i_width, y8i_height, mode=self.y8i_mode
             )
@@ -1477,7 +1401,6 @@ class GStreamerInterface:
             return Gst.FlowReturn.ERROR
         
         try:
-            # Convert to numpy array
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             data = np.frombuffer(map_info.data, dtype=np.uint8)
@@ -1485,17 +1408,13 @@ class GStreamerInterface:
             
             timestamp = time.time()
             
-            # Update appropriate buffer in merger
             if pipeline.stream_type == StreamType.DEPTH_HIGH:
                 self.depth_merger.update_high_byte(data, timestamp)
             elif pipeline.stream_type == StreamType.DEPTH_LOW:
                 self.depth_merger.update_low_byte(data, timestamp)
             
-            # Try to get merged depth
             merged_depth = self.depth_merger.get_merged_depth()
             if merged_depth is not None:
-                # Process merged depth (display, save, publish to ROS, etc.)
-                # For now, just log
                 if hasattr(self, '_depth_frame_count'):
                     self._depth_frame_count += 1
                 else:
@@ -1525,8 +1444,6 @@ class GStreamerInterface:
             return Gst.FlowReturn.ERROR
         
         try:
-            # Process IR frame (display, save, etc.)
-            # For now, just log
             if hasattr(pipeline, 'frame_count'):
                 pipeline.frame_count += 1
             else:
@@ -1542,8 +1459,6 @@ class GStreamerInterface:
             buffer.unmap(map_info)
         
         return Gst.FlowReturn.OK
-    
-    # ==================== Cleanup Methods ====================
     
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
@@ -1580,27 +1495,20 @@ class GStreamerInterface:
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
             pipeline.running = False 
             
-            # Also stop paired pipeline if exists
             if pipeline.paired_pipeline and pipeline.paired_pipeline.stream_type in self.pipelines:
                 paired = pipeline.paired_pipeline
                 paired.running = False
                 
-                # --- 修正: 確保只有 V4L2 源頭的管道負責清理 V4L2/Capture 資源 ---
-                # Primary streams are: DEPTH_HIGH, INFRA_LEFT (v4l2_cmd is set)
                 is_primary_pipeline = pipeline.v4l2_cmd is not None
                 is_paired_primary = paired.v4l2_cmd is not None
 
-                # 如果當前管道持有 V4L2 資源但不是 primary (例如在 _launch_split_sender 中被複製)
-                # 則在清理前清空它的引用，確保 primary 管道 (如果還在) 負責清理。
                 if pipeline.v4l2_process is not None and not is_primary_pipeline:
                     pipeline.v4l2_process = None
                     pipeline.capture_gst_pipeline = None
                 
-                # 對 paired pipeline 做同樣的檢查和清理，以防止雙重清理。
                 if paired.v4l2_process is not None and not is_paired_primary:
                     paired.v4l2_process = None
                     paired.capture_gst_pipeline = None
-                # --- 修正結束 ---
 
                 self._cleanup_pipeline(paired)
                 if paired.stream_type in self.pipelines:
@@ -1666,16 +1574,11 @@ class GStreamerInterface:
                 status[stream_type.value] = False
                 continue
 
-            # 檢查是否為 Color Stream，如果是則使用標準檢查
             is_standard_stream = stream_type == StreamType.COLOR or (stream_type == StreamType.DEPTH and self._get_stream_config(stream_type).encoding == "lz4")
             
-            # 檢查是否為 Primary Split Stream (V4L2 來源)
             is_primary_split = stream_type in [StreamType.DEPTH_HIGH, StreamType.INFRA_LEFT]
 
             if is_primary_split or pipeline.v4l2_process:
-                # 適用於 Primary Split Stream (有 v4l2_cmd/v4l2_process)
-                
-                # Primary Split Stream 必須檢查 V4L2 進程是否存活
                 poll_result = pipeline.v4l2_process.poll()
                 v4l2_running = (poll_result is None)
                 
@@ -1684,14 +1587,10 @@ class GStreamerInterface:
                     try:
                         ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
                         
-                        # --- 修正 1: 對於 AppSrc-based 的分裂流，只要 V4L2 運行，且 GST 管道處於 PAUSED 或 PLAYING 狀態，即視為成功 ---
                         if v4l2_running:
-                             # PAUSED 狀態表示管道已啟動，並在等待 AppSrc 推送數據
                             gst_running = (state >= Gst.State.PAUSED)
                         else:
-                            # 如果 V4L2 已經結束，則 GST 管道必須已經達到 PLAYING
                             gst_running = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
-                        # --- 修正結束 ---
                             
                     except Exception:
                         gst_running = False
@@ -1699,23 +1598,17 @@ class GStreamerInterface:
                 status[stream_type.value] = v4l2_running and gst_running
 
             elif pipeline.gst_pipeline: 
-                # 適用於 Standard Stream (Color) 或 Secondary Split Stream (Depth_low, Infra_right)
                 try:
                     ret, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
                     
                     is_secondary_split = stream_type in [StreamType.DEPTH_LOW, StreamType.INFRA_RIGHT]
                     
-                    # --- 修正 2: 對於 Secondary Split Stream，只檢查是否達到 PAUSED 狀態 ---
                     if is_secondary_split:
-                        # Secondary streams are passively driven by AppSrc, PAUSED is acceptable
                         status[stream_type.value] = (state >= Gst.State.PAUSED)
-                    # --- 修正結束 ---
-                    
-                    # 標準流必須達到 PLAYING
+              
                     elif is_standard_stream:
                          status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
                     
-                    # 處理其他未被 is_standard_stream 捕獲的情況 (例如 paired 引用)
                     else:
                         status[stream_type.value] = (state == Gst.State.PLAYING or pending == Gst.State.PLAYING)
 
