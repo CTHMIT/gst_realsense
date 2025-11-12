@@ -950,7 +950,48 @@ class GStreamerInterface:
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
-        return "queue ! videoconvert ! ximagesink sync=false"
+        return (
+            "queue max-size-buffers=10 ! "
+            "videoconvert ! "
+            "identity name=monitor silent=false ! "  
+            "autovideosink sync=false"
+        )
+    
+    def _on_bus_message(self, bus, message, pipeline):
+        """Handle GStreamer bus messages for debugging"""
+        t = message.type
+        
+        if t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            LOGGER.error(f"Pipeline error [{pipeline.stream_type.value}]: {err}")
+            LOGGER.error(f"Debug info: {debug}")
+            pipeline.running = False
+            
+        elif t == Gst.MessageType.WARNING:
+            warn, debug = message.parse_warning()
+            LOGGER.warning(f"Pipeline warning [{pipeline.stream_type.value}]: {warn}")
+            
+        elif t == Gst.MessageType.EOS:
+            LOGGER.info(f"End of stream [{pipeline.stream_type.value}]")
+            pipeline.running = False
+            
+        elif t == Gst.MessageType.STATE_CHANGED:
+            if message.src == pipeline.gst_pipeline:
+                old_state, new_state, pending = message.parse_state_changed()
+                LOGGER.debug(f"State changed [{pipeline.stream_type.value}]: "
+                            f"{old_state.value_nick} -> {new_state.value_nick}")
+        
+        elif t == Gst.MessageType.STREAM_STATUS:
+            status = message.parse_stream_status()
+            LOGGER.debug(f"Stream status [{pipeline.stream_type.value}]: {status}")
+            
+        elif t == Gst.MessageType.ELEMENT:
+            structure = message.get_structure()
+            if structure:
+                LOGGER.debug(f"Element message [{pipeline.stream_type.value}]: {structure.to_string()}")
+
+
+
         
     def _get_payload_type(self, stream_type: StreamType) -> int:
         """Get RTP payload type for stream"""
@@ -1229,26 +1270,90 @@ class GStreamerInterface:
             self._cleanup_pipeline(pipeline)
             raise
     
-    def _launch_standard_receiver(self, pipeline: GStreamerPipeline):
-        """Launch standard H.264 receiver"""
+    def _monitor_network_stats(self, pipeline: GStreamerPipeline):
+        """Monitor network statistics from udpsrc"""
+        if not pipeline.gst_pipeline:
+            return None
+        
+        udpsrc = pipeline.gst_pipeline.get_by_name("udpsrc0")
+        if not udpsrc:
+            return None
+        
         try:
+            stats = {
+                'bytes_received': udpsrc.get_property('bytes-served') if udpsrc.has_property('bytes-served') else 0,
+            }
+            return stats
+        except Exception as e:
+            LOGGER.debug(f"Failed to get network stats: {e}")
+            return None
+
+    def _on_buffer_probe(self, pad, info, pipeline):
+        """Monitor buffer flow through pipeline"""
+        buffer = info.get_buffer()
+        
+        if not hasattr(pipeline, 'buffer_count'):
+            pipeline.buffer_count = 0
+            pipeline.last_log_time = time.time()
+        
+        pipeline.buffer_count += 1
+        
+        current_time = time.time()
+        if pipeline.buffer_count % 30 == 0 or (current_time - pipeline.last_log_time) > 5:
+            LOGGER.info(
+                f"[{pipeline.stream_type.value}] Buffer count: {pipeline.buffer_count}, "
+                f"size: {buffer.get_size()} bytes, "
+                f"pts: {buffer.pts / Gst.SECOND:.2f}s"
+            )
+            pipeline.last_log_time = current_time
+        
+        return Gst.PadProbeReturn.OK
+    
+    def _launch_standard_receiver(self, pipeline: GStreamerPipeline):
+        """Launch standard H.264 receiver with enhanced debugging"""
+        try:
+            LOGGER.info(f"Launching receiver for {pipeline.stream_type.value}")
+            LOGGER.info(f"Pipeline: {pipeline.pipeline_str}")
+            
+            # Parse pipeline
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
+            # Add bus watch for error handling
+            bus = pipeline.gst_pipeline.get_bus()
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message, pipeline)
+            
+            # Add probe to monitor data flow
+            udpsrc = pipeline.gst_pipeline.get_by_name("udpsrc0")
+            if udpsrc:
+                src_pad = udpsrc.get_static_pad("src")
+                if src_pad:
+                    src_pad.add_probe(
+                        Gst.PadProbeType.BUFFER,
+                        self._on_buffer_probe,
+                        pipeline
+                    )
+                    LOGGER.info(f"Added buffer probe to monitor data flow")
+            
+            # Start pipeline
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
             
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+            # Wait for state change
+            state_change, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
             
             if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started receiver {pipeline.stream_type.value}")
+                LOGGER.info(f"✓ Started receiver {pipeline.stream_type.value}")
+            else:
+                LOGGER.warning(f"Pipeline state: {state.value_nick}, pending: {pending.value_nick}")
             
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
             
         except Exception as e:
-            LOGGER.error(f"Launch standard receiver failed: {e}")
+            LOGGER.error(f"Launch receiver failed: {e}", exc_info=True)
             self._cleanup_pipeline(pipeline)
             raise
     
