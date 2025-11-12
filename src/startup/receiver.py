@@ -77,7 +77,7 @@ class StreamingReceiver:
             LOGGER.info(f"Y8I mode: {y8i_mode}")
         
         # Start streams
-        LOGGER.info(f"\nStarting receivers...")
+        LOGGER.info(f"Starting receivers...")
         try:
             started_count = 0
             
@@ -129,7 +129,7 @@ class StreamingReceiver:
             
             # Check status
             status = self.interface.get_pipeline_status()
-            LOGGER.info("\nPipeline Status:")
+            LOGGER.info("Pipeline Status:")
             for stream, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 try:
@@ -249,7 +249,7 @@ class StreamingReceiver:
                                   f"range=[{merged.min()}, {merged.max()}]")
                     
         except KeyboardInterrupt:
-            LOGGER.info("\nInterrupted by user")
+            LOGGER.info("Interrupted by user")
         finally:
             self.stop()
 
