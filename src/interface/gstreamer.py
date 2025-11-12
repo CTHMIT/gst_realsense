@@ -1319,15 +1319,16 @@ class GStreamerInterface:
     
     def _on_depth_split_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """Callback to split 16-bit depth and push to both pipelines"""
-        timestamp = buffer.pts
-        if timestamp == Gst.CLOCK_TIME_NONE:
-            timestamp = int(time.time() * Gst.SECOND)
-
+        
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.ERROR
         
         buffer = sample.get_buffer()
+        timestamp = buffer.pts
+        if timestamp == Gst.CLOCK_TIME_NONE:
+            timestamp = int(time.time() * Gst.SECOND)
+
         success, map_info = buffer.map(Gst.MapFlags.READ)
         
         if not success:
@@ -1376,15 +1377,14 @@ class GStreamerInterface:
     def _on_y8i_split_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """Callback to split Y8I and push to both pipelines"""
 
-        timestamp = buffer.pts
-        if timestamp == Gst.CLOCK_TIME_NONE:
-            timestamp = int(time.time() * Gst.SECOND)
-
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.ERROR
         
         buffer = sample.get_buffer()
+        timestamp = buffer.pts
+        if timestamp == Gst.CLOCK_TIME_NONE:
+            timestamp = int(time.time() * Gst.SECOND)
         success, map_info = buffer.map(Gst.MapFlags.READ)
         
         if not success:
