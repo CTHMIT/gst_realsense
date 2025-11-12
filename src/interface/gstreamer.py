@@ -1344,17 +1344,17 @@ class GStreamerInterface:
             # Split into high and low bytes
             high_byte, low_byte = DepthSplitter.split_depth(depth_16bit)
             
-            # Push to high byte pipeline (this one)
             high_appsrc = pipeline.gst_pipeline.get_by_name("src")
             if high_appsrc:
                 high_buffer = Gst.Buffer.new_wrapped(high_byte.tobytes())
+                high_buffer.pts = timestamp
                 high_appsrc.push_buffer(high_buffer)
             
-            # Push to low byte pipeline (paired)
             if pipeline.paired_pipeline and pipeline.paired_pipeline.gst_pipeline:
                 low_appsrc = pipeline.paired_pipeline.gst_pipeline.get_by_name("src")
                 if low_appsrc:
                     low_buffer = Gst.Buffer.new_wrapped(low_byte.tobytes())
+                    low_buffer.pts = timestamp
                     low_appsrc.push_buffer(low_buffer)
             
         except Exception as e:
@@ -1402,17 +1402,17 @@ class GStreamerInterface:
                 y8i_data, y8i_width, y8i_height, mode=self.y8i_mode
             )
             
-            # Push to left IR pipeline (this one)
             left_appsrc = pipeline.gst_pipeline.get_by_name("src")
             if left_appsrc:
                 left_buffer = Gst.Buffer.new_wrapped(left_ir.tobytes())
+                left_buffer.pts = timestamp
                 left_appsrc.push_buffer(left_buffer)
             
-            # Push to right IR pipeline (paired)
             if pipeline.paired_pipeline and pipeline.paired_pipeline.gst_pipeline:
                 right_appsrc = pipeline.paired_pipeline.gst_pipeline.get_by_name("src")
                 if right_appsrc:
                     right_buffer = Gst.Buffer.new_wrapped(right_ir.tobytes())
+                    right_buffer.pts = timestamp
                     right_appsrc.push_buffer(right_buffer)
             
         except Exception as e:
