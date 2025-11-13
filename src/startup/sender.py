@@ -78,8 +78,7 @@ class StreamingSender:
             for stream_name, running in status.items():
                 status_str = "✓ Running" if running else "✗ Failed"
                 try:
-                    base_name = stream_name.replace("infra_left", "infra1").replace("infra_right", "infra2")
-                    port = self.config.get_stream_port(base_name)
+                    port = self.config.get_stream_port(stream_name)
                     LOGGER.info(f"  {stream_name}: {status_str} (port {port})")
                 except:
                     LOGGER.info(f"  {stream_name}: {status_str}")

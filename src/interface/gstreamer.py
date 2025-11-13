@@ -253,7 +253,7 @@ class GStreamerInterface:
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config)
             
-            # (Optional) Set emitter enabled
+            # Set emitter enabled
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor:
                 if depth_sensor.supports(rs.option.emitter_enabled):
@@ -263,7 +263,6 @@ class GStreamerInterface:
             
             LOGGER.info("Unified RealSense pipeline started. Streaming...")
 
-            # 3. Capture-Push Loop
             while self.running:
                 frames = self.rs_pipeline.wait_for_frames()
                 timestamp_ns = int(frames.get_timestamp() * 1_000_000)
@@ -340,7 +339,6 @@ class GStreamerInterface:
 
         pipelines = {}
         
-        # Handle STEREO flag, converting it to INFRA1 and INFRA2
         active_streams = set(stream_types)
         if StreamType.INFRA1 in active_streams and StreamType.INFRA2 in active_streams:
             active_streams.add(StreamType.INFRA1)
@@ -349,12 +347,10 @@ class GStreamerInterface:
         final_stream_list = list(active_streams)
 
         try:
-            # 1. Build all GStreamer pipelines
             has_ir = False
             for stream_type in final_stream_list:
                 if stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                     if not has_ir:
-                        # Build IR pipelines
                         left_pipeline, right_pipeline = self.build_stereo_sender_pipelines()
                         pipelines[StreamType.INFRA1] = left_pipeline
                         pipelines[StreamType.INFRA2] = right_pipeline
@@ -368,20 +364,17 @@ class GStreamerInterface:
                         stream_type=StreamType.DEPTH
                     )
 
-            # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
             for stream_type in final_stream_list:
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
                 else:
-                    # This catches INFRA2 (if INFRA1 was already handled)
                     if stream_type == StreamType.INFRA2 and StreamType.INFRA1 in pipelines:
-                         pass # Already handled in the INFRA1 batch
+                         pass 
                     else:
                         raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
             
-            # 3. Start the pyrealsense capture thread
             LOGGER.info("Starting unified pyrealsense capture thread...")
             self.rs_thread = threading.Thread(
                 target=self._pyrealsense_capture_loop,
@@ -892,8 +885,6 @@ class GStreamerInterface:
             self._cleanup_pipeline(pipeline)
             raise
     
-    # ==================== Callback Methods ====================
-    
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
         appsink = pipeline.gst_pipeline.get_by_name("sink")
@@ -1008,8 +999,6 @@ class GStreamerInterface:
             buffer.unmap(map_info)
         return Gst.FlowReturn.OK
     
-    # ==================== Cleanup Methods ====================
-    
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
         if pipeline.gst_pipeline:
@@ -1030,16 +1019,14 @@ class GStreamerInterface:
             if not pipeline.running: return
                 
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
-            self.running = False # Signal threads to stop
+            self.running = False 
             pipeline.running = False 
 
-            # Handle shared realsense thread
             if self.rs_thread:
                 LOGGER.info("Waiting for pyrealsense2 thread to stop...")
                 self.rs_thread.join(timeout=2)
                 self.rs_thread = None
                 
-            # Handle paired pipelines (INFRA1/INFRA2)
             if pipeline.paired_pipeline and pipeline.paired_pipeline.stream_type in self.pipelines:
                 paired = pipeline.paired_pipeline
                 paired.running = False
@@ -1069,7 +1056,6 @@ class GStreamerInterface:
     def _get_stream_config(self, stream_type: StreamType) -> StreamConfig:
         """Get stream config, mapping split types to base types"""
         type_map = {
-            # No legacy types needed anymore
             StreamType.INFRA1: "infra1",
             StreamType.INFRA2: "infra2"
         }
@@ -1113,11 +1099,11 @@ class GStreamerInterface:
         return status
 
 
-def create_sender_interface(config_path: str = "config.yaml") -> GStreamerInterface:
+def create_sender_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)
     return GStreamerInterface(config)
 
 
-def create_receiver_interface(config_path: str = "config.yaml") -> GStreamerInterface:
+def create_receiver_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)
     return GStreamerInterface(config)
