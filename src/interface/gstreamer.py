@@ -21,7 +21,6 @@ import shlex
 import os 
 import struct
 import collections
-
 import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0') 
@@ -502,7 +501,8 @@ class GStreamerInterface:
     def build_y8i_split_sender_pipeline(
         self,
         source_device: Optional[str] = None,
-        split_mode: str = "sidebyside"
+        split_mode: str = "sidebyside",
+        use_pyrealsense: bool = False
     ) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
         """
         Build sender pipelines for Y8I split into left/right infrared streams
@@ -545,21 +545,25 @@ class GStreamerInterface:
         LOGGER.info(f"  Right IR stream → port {right_port}, pt {pt_r}")
         
         # V4L2 command to capture Y8I
-        v4l2_cmd = (
-            f"v4l2-ctl -d {shlex.quote(device)} "
-            f"--set-fmt-video=width={y8i_width},height={y8i_height},pixelformat='Y8I ' "
-            f"--set-parm={fps} "
-            f"--stream-mmap --stream-count=0 --stream-to=-"
-        )
+        v4l2_cmd = None
         
-        # Base pipeline for reading Y8I
-        base_pipeline = (
-            f"fdsrc name=src ! "
-            f"queue max-size-buffers=2 ! "
-            f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
-            f"appsink name=sink emit-signals=true sync=false"
-        )
-    
+        if not use_pyrealsense:
+            # V4L2 command to capture Y8I
+            v4l2_cmd = (
+                f"v4l2-ctl -d {shlex.quote(device)} "
+                f"--set-fmt-video=width={y8i_width},height={y8i_height},pixelformat='Y8I ' "
+                f"--set-parm={fps} "
+                f"--stream-mmap --stream-count=0 --stream-to=-"
+            )
+            
+            # Base pipeline for reading Y8I
+            base_pipeline = (
+                f"fdsrc name=src ! "
+                f"queue max-size-buffers=2 ! "
+                f"videoparse width={y8i_width} height={y8i_height} format=gray8 framerate={fps}/1 ! "
+                f"appsink name=sink emit-signals=true sync=false"
+            )
+
         ir_caps_str = (
             f"video/x-raw,format=GRAY8,width={single_ir_width},height={y8i_height},framerate={fps}/1"
         )
@@ -612,7 +616,7 @@ class GStreamerInterface:
             stream_type=StreamType.INFRA_LEFT,
             port=left_port,
             pt=pt_l,
-            v4l2_cmd=v4l2_cmd  
+            v4l2_cmd=v4l2_cmd if not use_pyrealsense else None
         )
         
         right_pipeline = GStreamerPipeline(
@@ -776,7 +780,7 @@ class GStreamerInterface:
             f"encoding-name=H264,payload={payload_type}"
         )
 
-        decoder_element = "avdec_h264"
+        decoder_element = self._get_decoder_element()
         latency = self.config.streaming.jitter_buffer.latency
         receiver_ip = self.config.network.server.ip
         protocol = self.config.network.transport.protocol
@@ -789,7 +793,7 @@ class GStreamerInterface:
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"tee name=t ! "
-            f"queue ! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false "
+            f"queue ! appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false "            
             f"t. ! queue ! glimagesink sync=false"
         )
         
@@ -865,7 +869,7 @@ class GStreamerInterface:
             f"application/x-rtp,media=video,clock-rate=90000,"
             f"encoding-name=H264,payload={payload_type}"
         )
-        decoder_element = "avdec_h264"
+        decoder_element = self._get_decoder_element()
         latency = self.config.streaming.jitter_buffer.latency
         protocol = self.config.network.transport.protocol
         receiver_ip = self.config.network.server.ip
@@ -879,7 +883,7 @@ class GStreamerInterface:
             f"videoconvert ! "
             f"video/x-raw,format=GRAY8,width={width},height={height} ! "
             f"tee name=t ! "
-            f"queue ! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false "
+            f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
             f"t. ! queue ! glimagesink sync=false"
         )
         
@@ -1043,6 +1047,7 @@ class GStreamerInterface:
                     f"insert-sps-pps=true "
                     f"control-rate=1 " 
                     f"profile=4" # 4=High, 2=Baseline
+                    f"iframeinterval=30"
                 )
                 
                 if stream_type == StreamType.COLOR:
@@ -1374,7 +1379,7 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            appsink = pipeline.gst_pipeline.get_by_name("sink")
+            appsink = pipeline.gst_pipeline.get_by_name("depth_appsink")
             if appsink:
                 appsink.connect("new-sample", self._on_depth_byte_sample, pipeline)
             
@@ -1401,7 +1406,7 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            appsink = pipeline.gst_pipeline.get_by_name("sink")
+            appsink = pipeline.gst_pipeline.get_by_name("ir_appsink")
             if appsink:
                 appsink.connect("new-sample", self._on_ir_sample, pipeline)
             

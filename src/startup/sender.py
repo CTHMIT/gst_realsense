@@ -13,11 +13,15 @@ import argparse
 import time
 from pathlib import Path
 from typing import List, Optional, Dict
+
+import pyrealsense2 as rs
+import numpy as np
+import threading
 import logging
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from interface.gstreamer import GStreamerInterface, StreamType
+from interface.gstreamer import GStreamerInterface, StreamType, GStreamerPipeline
 from interface.config import StreamingConfigManager
 from utils.logger import LOGGER
 
@@ -31,6 +35,9 @@ class StreamingSender:
         self.running = False
         self.active_pipelines = []
         
+        self.rs_pipeline: Optional[rs.pipeline] = None
+        self.rs_thread: Optional[threading.Thread] = None
+
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
@@ -254,59 +261,147 @@ class StreamingSender:
         except Exception as e:
             LOGGER.error(f"  ✗ Depth (split): Failed - {e}")
             return False
-    
+        
+    def _pyrealsense_y8i_loop(
+        self, 
+        left_pipeline: GStreamerPipeline, 
+        right_pipeline: GStreamerPipeline
+    ):
+        """Thread function to run pyrealsense2 and push frames to appsrc"""
+        
+        left_appsrc = left_pipeline.gst_pipeline.get_by_name("src")
+        right_appsrc = right_pipeline.gst_pipeline.get_by_name("src")
+        
+        if not left_appsrc or not right_appsrc:
+            LOGGER.error("Could not find 'src' in appsrc pipelines! Thread stopping.")
+            return
+            
+        # Get camera config
+        width = self.config.realsense_camera.width // 2 # Y8I width is 2x IR width
+        height = self.config.realsense_camera.height
+        fps = self.config.realsense_camera.fps
+        
+        try:
+            # Configure and start RealSense
+            self.rs_pipeline = rs.pipeline()
+            rs_config = rs.config()
+            
+            LOGGER.info(f"Configuring RealSense: Infra1/2 at {width}x{height} @ {fps}fps")
+            
+            # Request two separate 8-bit infrared streams
+            rs_config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, fps)
+            rs_config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, fps)
+            
+            profile = self.rs_pipeline.start(rs_config)
+            
+            # (Optional) Set emitter enabled
+            depth_sensor = profile.get_device().first_depth_sensor()
+            if depth_sensor:
+                if depth_sensor.supports(rs.option.emitter_enabled):
+                    depth_sensor.set_option(rs.option.emitter_enabled, 1)
+                if depth_sensor.supports(rs.option.laser_power):
+                    depth_sensor.set_option(rs.option.laser_power, 150) # Set laser power
+            
+            LOGGER.info("RealSense pipeline started. Streaming...")
+
+            while self.running:
+                frames = self.rs_pipeline.wait_for_frames()
+                
+                ir1_frame = frames.get_infrared_frame(1)
+                ir2_frame = frames.get_infrared_frame(2)
+                
+                if not ir1_frame or not ir2_frame:
+                    LOGGER.warning("Missing IR frame, skipping")
+                    continue
+                
+                # Get numpy data
+                ir1_data = np.asanyarray(ir1_frame.get_data())
+                ir2_data = np.asanyarray(ir2_frame.get_data())
+                
+                # Create GStreamer buffers
+                ir1_buffer = Gst.Buffer.new_wrapped(ir1_data.tobytes())
+                ir2_buffer = Gst.Buffer.new_wrapped(ir2_data.tobytes())
+                
+                # Get timestamp (convert from ms to ns)
+                timestamp_ns = int(ir1_frame.get_timestamp() * 1_000_000) 
+                
+                ir1_buffer.pts = timestamp_ns
+                ir1_buffer.duration = Gst.CLOCK_TIME_NONE
+                ir2_buffer.pts = timestamp_ns
+                ir2_buffer.duration = Gst.CLOCK_TIME_NONE
+                
+                # Push buffers
+                left_appsrc.push_buffer(ir1_buffer)
+                right_appsrc.push_buffer(ir2_buffer)
+
+        except Exception as e:
+            if self.running:
+                LOGGER.error(f"pyrealsense2 loop error: {e}", exc_info=True)
+        finally:
+            if self.rs_pipeline:
+                self.rs_pipeline.stop()
+                self.rs_pipeline = None
+                LOGGER.info("pyrealsense2 pipeline stopped.")
+
     def _start_y8i_split(
         self,
         split_mode: str,
         source_topics: Optional[Dict[StreamType, str]],
         auto_detect: bool
     ) -> bool:
-        """Start Y8I in split mode (left + right IR)"""
+        """Start Y8I in split mode (left + right IR) using pyrealsense2"""
         try:
-            # Get source
-            source_device = None
-            
-            if source_topics and StreamType.Y8I_STEREO in source_topics:
-                LOGGER.warning("  Y8I: ROS2 topic source not supported for split mode, using auto-detect")
-            
-            if auto_detect:
-                source_device = self.interface.detect_realsense_device(StreamType.Y8I_STEREO)
-                if not source_device:
-                    LOGGER.error("  Y8I: Could not detect device")
-                    return False
-                LOGGER.info(f"  Y8I: Detected device {source_device}")
-            else:
-                LOGGER.error("  Y8I: No source specified for split mode")
-                return False
-            
-            # Build split pipelines
+            LOGGER.info("  Y8I: Using pyrealsense2 SDK for capture")
+
+            # Build split pipelines with appsrc
+            # We pass use_pyrealsense=True to bypass v4l2-ctl logic
             left_pipeline, right_pipeline = self.interface.build_y8i_split_sender_pipeline(
-                source_device=source_device,
-                split_mode=split_mode
+                split_mode=split_mode,
+                use_pyrealsense=True 
             )
-            
-            # Launch both pipelines
+
+            # Launch both sender pipelines (they will wait for appsrc)
             self.interface.launch_sender_pipeline(left_pipeline)
             self.interface.launch_sender_pipeline(right_pipeline)
-            
+
             self.active_pipelines.extend([left_pipeline, right_pipeline])
-            
-            LOGGER.info(f"  ✓ Y8I (split mode: {split_mode}):")
+
+            # Start the pyrealsense2 capture thread
+            LOGGER.info("Starting pyrealsense2 capture thread for Y8I...")
+            self.rs_thread = threading.Thread(
+                target=self._pyrealsense_y8i_loop,
+                args=(left_pipeline, right_pipeline),
+                daemon=True
+            )
+            self.rs_thread.start()
+
+            LOGGER.info(f"  ✓ Y8I (split mode: {split_mode} via pyrealsense2):")
             LOGGER.info(f"    - Left IR: port {left_pipeline.port}")
             LOGGER.info(f"    - Right IR: port {right_pipeline.port}")
             return True
-            
+
         except Exception as e:
-            LOGGER.error(f"  ✗ Y8I (split): Failed - {e}")
+            LOGGER.error(f"  ✗ Y8I (split): Failed - {e}", exc_info=True)
             return False
     
     def stop(self):
         """Stop all streams"""
         if self.running:
             LOGGER.info("Stopping streams...")
+
+            # Signal thread to stop
+            self.running = False
+
+            # Wait for realsense thread to finish
+            if self.rs_thread:
+                LOGGER.info("Waiting for pyrealsense2 thread to stop...")
+                self.rs_thread.join(timeout=2)
+                self.rs_thread = None
+
+            # Stop GStreamer pipelines
             self.interface.stop_all()
             self.active_pipelines.clear()
-            self.running = False
+
             LOGGER.info("All streams stopped")
     
     def run_forever(self):
