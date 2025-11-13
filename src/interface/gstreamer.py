@@ -354,28 +354,37 @@ class GStreamerInterface:
 
         elif stream_type == StreamType.COLOR:
             LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
-            
+
             color_caps_str = (
                 f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
             )
 
-            encoder = self._build_encoder(stream_type, stream_config)
-            protocol = self.config.network.transport.protocol
-            server_ip = self.config.network.server.ip
-
-            # *** THIS IS THE FIX ***
+            # --- 測試管線 (Test Pipeline) ---
+            # 將原本的 pipeline_str 註解掉，換成這個：
+            LOGGER.info("!!! DEBUG: FORCING LOCAL DISPLAY TEST !!!")
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
-                f"video/x-raw,format=NV12 ! "
-                f"{encoder} ! " # encoder already contains nvvidconv
-                f"{protocol}sink host={server_ip} port={port}"
+                f"xvimagesink sync=false"
             )
-            # *** END OF FIX ***
+            # --- 測試結束 ---
 
-            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
-            LOGGER.info(f"Pipeline: {pipeline_str}")
+            # --- 原本的管線 (請先註解掉) ---
+            # encoder = self._build_encoder(stream_type, stream_config)
+            # protocol = self.config.network.transport.protocol
+            # server_ip = self.config.network.server.ip
+            # pipeline_str = (
+            #     f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
+            #     f"queue max-size-buffers=2 ! "
+            #     f"videoconvert ! "
+            #     f"video/x-raw,format=NV12 ! "
+            #     f"{encoder} ! " # encoder already contains nvvidconv
+            #     f"{protocol}sink host={server_ip} port={port}"
+            # )
+            # LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
+            # LOGGER.info(f"Pipeline: {pipeline_str}")
+            # --- 原本的管線結束 ---
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
@@ -383,7 +392,7 @@ class GStreamerInterface:
                 port=port, 
                 pt=pt
             )
-        
+            
         elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
             LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
 
