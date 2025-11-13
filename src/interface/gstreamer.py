@@ -343,7 +343,7 @@ class GStreamerInterface:
             )
 
             LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
+            LOGGER.info(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
@@ -367,7 +367,7 @@ class GStreamerInterface:
                 f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
-                f"video/x-raw,format=NV12 ! "
+                f"video/x-raw,format=I420 ! "
                 f"{encoder} ! " 
                 f"{protocol}sink host={server_ip} port={port}"
             )
@@ -555,6 +555,7 @@ class GStreamerInterface:
         if stream_config.encoding == "h264":
             encoder_element = None
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
+                encoder_element = None 
                 bitrate_bps = bitrate * 1000  
                 encoder_element_core = (
                     f"nvv4l2h264enc bitrate={bitrate_bps} "
