@@ -518,7 +518,7 @@ class GStreamerInterface:
         decoder_element = self._get_decoder_element()
         latency = self.config.streaming.jitter_buffer.latency
         protocol = self.config.network.transport.protocol
-        receiver_ip = self.config.network.server.ip
+        receiver_ip = "0.0.0.0"
 
         pipeline_str = (
             f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
@@ -571,7 +571,7 @@ class GStreamerInterface:
             sink = self._build_sink(stream_type)
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
-            receiver_ip = self.config.network.server.ip
+            receiver_ip = "0.0.0.0"
             pt = self._get_payload_type(stream_type)
             
             caps_str = (
@@ -592,6 +592,25 @@ class GStreamerInterface:
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
                 port=port, pt=pt
+            )
+        elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+            caps_str = (
+                f"application/x-rtp,media=video,clock-rate=90000,"
+                f"encoding-name=H264,payload={pt}"
+            )
+            decoder_element = self._get_decoder_element()
+            latency = self.config.streaming.jitter_buffer.latency
+            protocol = self.config.network.transport.protocol
+            receiver_ip = self.config.network.server.ip
+
+            pipeline_str = (
+                f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
+                f"rtpjitterbuffer latency={latency} ! "
+                f"rtph264depay ! h264parse ! {decoder_element} ! videoconvert ! "
+                f"video/x-raw,format=GRAY8,width={width},height={height} ! "
+                f"tee name=t ! "
+                f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
+                f"t. ! queue ! autovideosink sync=false"
             )
         else:
             raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}. Use build_stereo_receiver_pipelines() for INFRA1/2.")
@@ -902,7 +921,12 @@ class GStreamerInterface:
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """
-Moves `start_pyrealsense_streams` logic to build both pipelines if `INFRA1` or `INFRA2` is present, `launch_sender_pipeline` logic to handle H.264/LZ4, `launch_receiver_pipeline` logic, `build_receiver_pipeline` to raise error for IR, and adds `_start_stereo_receive` to `receiver.py`.        Callback for new sample from appsink (LZ4 Sender)
+        Moves `start_pyrealsense_streams` logic to build both pipelines 
+        if `INFRA1` or `INFRA2` is present, 
+        `launch_sender_pipeline` logic to handle H.264/LZ4, 
+        `launch_receiver_pipeline` logic, `build_receiver_pipeline` to raise error for IR, 
+        and adds `_start_stereo_receive` to `receiver.py`.        
+        Callback for new sample from appsink (LZ4 Sender)
         """
         sample = appsink.pull_sample()
         if not sample:

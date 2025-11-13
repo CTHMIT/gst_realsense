@@ -50,7 +50,7 @@ realsense_camera:
         camera_format: "Z16"   
         encoding: "lz4"    
         port: 5020        
-        gstreamer_format: "Z16" 
+        gstreamer_format: "gray16-le" 
         ros_fomat: "16UC1" 
         bitrate: 8000
 

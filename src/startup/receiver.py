@@ -65,13 +65,14 @@ class StreamingReceiver:
             for stream_type in stream_types:                
                 
                 if stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                    if not has_ir_started:
+                    if not has_ir_started:                        
                         success = self._start_stereo_receive()
                         if success:
-                            started_count += 2  
+                            started_count += 2  # infra1 + infra2
                         has_ir_started = True
                 
                 elif stream_type in [StreamType.COLOR, StreamType.DEPTH]:
+                    # Color H.264 or Depth LZ4
                     success = self._start_single_stream(stream_type)
                     if success:
                         started_count += 1
@@ -171,6 +172,7 @@ class StreamingReceiver:
         finally:
             self.stop()
 
+
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -239,7 +241,7 @@ def main():
     try:
         receiver = StreamingReceiver(args.config)
         success = receiver.start(
-            stream_types=list(set(stream_types)) 
+            stream_types=list(set(stream_types)) #
         )
         
         if success:
