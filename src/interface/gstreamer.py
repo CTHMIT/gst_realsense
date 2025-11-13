@@ -208,6 +208,10 @@ class GStreamerInterface:
                         color_buffer.pts = timestamp_ns
                         color_buffer.duration = Gst.CLOCK_TIME_NONE
                         appsrcs[StreamType.COLOR].push_buffer(color_buffer)
+                        if not hasattr(self, '_color_frame_count'): self._color_frame_count = 0
+                        self._color_frame_count += 1
+                        if self._color_frame_count % 90 == 0: 
+                            LOGGER.debug(f"Pushed color frame {self._color_frame_count} to appsrc.")
                     else:
                         LOGGER.warning("Missing Color frame, skipping")
                 
