@@ -32,6 +32,7 @@ Gst.init(None)
 g_main_loop = GLib.MainLoop()
 g_main_loop_thread = threading.Thread(target=g_main_loop.run, daemon=True)
 g_main_loop_thread.start()
+
 from interface.config import StreamingConfigManager, StreamConfig
 from utils.logger import LOGGER
 
@@ -324,7 +325,9 @@ class GStreamerInterface:
         
         Handles: COLOR, DEPTH, INFRA1, INFRA2
         
-        FIXED: All H.264 streams now properly convert to NVMM before encoding
+        FIXED: Now dynamically builds the conversion pipeline based on
+        whether a HW (NVMM) or SW (CPU) encoder is selected, preventing
+        a pipeline crash when HW encoding is unavailable.
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
@@ -354,13 +357,19 @@ class GStreamerInterface:
                 pt=pt
             )
 
-        elif stream_type == StreamType.COLOR:
-            LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
+        # --- START FIX: Merged COLOR and INFRA logic ---
+        elif stream_type == StreamType.COLOR or stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
             
-            # Define caps at each stage
-            color_caps_str = (
-                f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
-            )
+            # 1. Define base caps
+            appsrc_caps_str = ""
+            if stream_type == StreamType.COLOR:
+                LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
+                appsrc_caps_str = f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
+            else: # INFRA1 or INFRA2
+                LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
+                appsrc_caps_str = f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+
+            # 2. Define conversion caps (NV12 is the common target for H.264)
             cpu_nv12_caps_str = (
                 f"video/x-raw,format=NV12,"
                 f"width={width},height={height},framerate={fps}/1"
@@ -370,21 +379,47 @@ class GStreamerInterface:
                 f"width={width},height={height},framerate={fps}/1"
             )
 
-            encoder = self._build_encoder(stream_type, stream_config)
+            # 3. Get the encoder element AND its type (HW vs SW)
+            #    _build_encoder now returns (encoder_string, is_hw_bool)
+            encoder_element, is_hw_encoder = self._build_encoder(stream_type, stream_config)
+
+            # 4. Build the conversion pipeline string based on the encoder type
+            conversion_pipeline_str = ""
+            if is_hw_encoder:
+                # HW Path: (BGR or GRAY8) -> NV12(CPU) -> NV12(NVMM) -> HW Encoder
+                conversion_pipeline_str = (
+                    f"videoconvert ! "
+                    f"{cpu_nv12_caps_str} ! "
+                    f"nvvidconv ! "
+                    f"{nvmm_caps_str} ! "
+                    f"{encoder_element}"
+                )
+            else:
+                # SW Path: (BGR or GRAY8) -> NV12(CPU) -> SW Encoder
+                # Note: x264enc can take NV12. videoconvert handles the conversion.
+                conversion_pipeline_str = (
+                    f"videoconvert ! "
+                    f"{cpu_nv12_caps_str} ! "
+                    f"{encoder_element}"
+                )
+
+            # 5. Build the common payloader and sink
+            payloader = f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
+            
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
+            sink = f"{protocol}sink host={server_ip} port={port}"
 
-            # FIXED: Properly convert BGR -> NV12 (CPU) -> NVMM before encoder
+            # 6. Assemble the full pipeline
             pipeline_str = (
-                f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
+                f"appsrc name=src format=time is-live=true caps=\"{appsrc_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
-                f"videoconvert ! "
-                f"{cpu_nv12_caps_str} ! "
-                f"nvvidconv ! "
-                f"{nvmm_caps_str} ! "
-                f"{encoder} ! " 
-                f"{protocol}sink host={server_ip} port={port}"
+                f"{conversion_pipeline_str} ! "
+                f"{payloader} ! " 
+                f"{sink}"
             )
+            
+            # --- END FIX ---
 
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
             LOGGER.info(f"Pipeline: {pipeline_str}")
@@ -396,48 +431,6 @@ class GStreamerInterface:
                 pt=pt
             )
         
-        elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-            LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
-
-            # Define caps at each stage
-            ir_caps_str = (
-                f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
-            )
-            cpu_nv12_caps_str = (
-                f"video/x-raw,format=NV12,"
-                f"width={width},height={height},framerate={fps}/1"
-            )
-            nvmm_caps_str = (
-                f"video/x-raw(memory:NVMM),format=NV12,"
-                f"width={width},height={height},framerate={fps}/1"
-            )
-
-            encoder = self._build_encoder(stream_type, stream_config)
-            protocol = self.config.network.transport.protocol
-            server_ip = self.config.network.server.ip
-            sink = f"{protocol}sink host={server_ip} port={port}"
-
-            # Pipeline: GRAY8 -> NV12 (CPU) -> NVMM -> encoder
-            pipeline_str = (
-                f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-                f"queue max-size-buffers=2 ! "
-                f"videoconvert ! "
-                f"{cpu_nv12_caps_str} ! "
-                f"nvvidconv ! "
-                f"{nvmm_caps_str} ! "
-                f"{encoder} ! "
-                f"{sink}"
-            )
-
-            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}, pt {pt}")
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
-
-            return GStreamerPipeline(
-                pipeline_str=pipeline_str,
-                stream_type=stream_type,
-                port=port, pt=pt
-            )
-
         else:
             raise ValueError(f"build_sender_pipeline called with unhandled type: {stream_type}")
     
@@ -566,29 +559,35 @@ class GStreamerInterface:
         self,
         stream_type: StreamType,
         stream_config: StreamConfig
-    ) -> str:
+    ) -> Tuple[str, bool]:
         """
-        Build encoder element string
+        Build encoder element string and return its type.
         
-        FIXED: Assumes input is already in NVMM format from build_sender_pipeline
-        Only handles encoder configuration and RTP payloader
+        FIXED: This function now returns the encoder element string AND
+        a boolean flag indicating if it's a hardware (NVMM) encoder.
+        This allows the pipeline builder to construct the correct
+        conversion chain.
+
+        Returns:
+            Tuple[str, bool]: (encoder_element_string, is_hw_encoder)
         """
         bitrate = stream_config.bitrate
         codec = self.config.streaming.rtp.codec
 
         if stream_config.encoding == "h264":
             encoder_element = None
+            is_hw_encoder = False
             
             # Check if hardware encoding is available and enabled
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
                 bitrate_bps = bitrate * 1000
                 
-                # FIXED: No more nvvidconv here - input is already NVMM from pipeline
                 encoder_element = (
                     f"nvv4l2h264enc bitrate={bitrate_bps} "
                     f"insert-sps-pps=true control-rate=1 "
                     f"profile=4 iframeinterval=30"
                 )
+                is_hw_encoder = True
                 LOGGER.info(f"Using HW encoder (nvv4l2h264enc) for {stream_type.value}")
             
             # Fallback to software encoder
@@ -598,16 +597,11 @@ class GStreamerInterface:
                     f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
                     f"key-int-max=30"
                 )
+                is_hw_encoder = False
 
-            # Add RTP payloader
-            pt = self._get_payload_type(stream_type)
-            return (
-                f"{encoder_element} ! "
-                f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
-            )
+            return encoder_element, is_hw_encoder
         else:
             raise ValueError(f"Unsupported encoding: {stream_config.encoding}")
-
     
     def _build_decoder(
         self,
@@ -1037,7 +1031,6 @@ class GStreamerInterface:
             else:
                 status[stream_type.value] = False
         return status
-
 
 def create_sender_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)

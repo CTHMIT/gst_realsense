@@ -72,7 +72,7 @@ class StreamingSender:
             time.sleep(self.config.streaming.startup_delay)
             
             status = self.interface.get_pipeline_status()
-            LOGGER.info("Pipeline Status:")
+            LOGGER.info(f"Pipeline Status: {status}")
             
             started_count = 0
             for stream_name, running in status.items():
