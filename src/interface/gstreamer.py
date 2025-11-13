@@ -448,7 +448,7 @@ class GStreamerInterface:
         self,
         stream_type: StreamType,
         receiver_ip: str = "0.0.0.0",
-        only_display: bool = False, # 確保 'only_display' 在函式簽名中
+        only_display: bool = False, 
     ) -> GStreamerPipeline:
         """
         Build GStreamer receiver pipeline for specified stream type
@@ -509,25 +509,21 @@ class GStreamerInterface:
                 f"rtpjitterbuffer latency={latency} ! "
                 f"rtph264depay ! " 
                 f"{decoder_core} ! " # "h264parse ! nvh264dec"
-                f"videoconvert ! "
+                f"videoconvert ! queue ! "
             )
 
             if stream_type == StreamType.COLOR:
                 LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
-                pipeline_str += f"queue ! {sink}"
+                pipeline_str += f"{sink}"
 
             elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                width = self.config.realsense_camera.width
-                height = self.config.realsense_camera.height
-                pipeline_str += f"video/x-raw,format=GRAY8,width={width},height={height} ! queue ! "
-
+                
                 if only_display:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
                     pipeline_str += sink
                 else:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver (Appsink Only)")
                     pipeline_str += "appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false"
-
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
