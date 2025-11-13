@@ -299,6 +299,7 @@ class GStreamerInterface:
         self.pipelines: Dict[StreamType, GStreamerPipeline] = {}
         self.depth_merger: Optional[DepthMergeProcessor] = None
         self.y8i_mode: str = "sidebyside"  # Default Y8I split mode
+        self.running = False
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
         self._validate_config()
@@ -526,7 +527,10 @@ class GStreamerInterface:
         y8i_height = self.config.realsense_camera.height  # e.g., 240
         fps = self.config.realsense_camera.fps
         
-        single_ir_width = y8i_width
+        if use_pyrealsense:
+            single_ir_width = y8i_width
+        else:
+            single_ir_width = y8i_width // 2
         
         # Get ports
         left_port = self._get_port(StreamType.INFRA_LEFT)
@@ -729,16 +733,15 @@ class GStreamerInterface:
 
             # Build split pipelines with appsrc
             # We pass use_pyrealsense=True to bypass v4l2-ctl logic
-            left_pipeline, right_pipeline = self.interface.build_y8i_split_sender_pipeline(
+            left_pipeline, right_pipeline = self.build_y8i_split_sender_pipeline(
                 split_mode=split_mode,
                 use_pyrealsense=True 
             )
 
             # Launch both sender pipelines (they will wait for appsrc)
-            self.interface.launch_sender_pipeline(left_pipeline)
-            self.interface.launch_sender_pipeline(right_pipeline)
-
-            self.active_pipelines.extend([left_pipeline, right_pipeline])
+            self.running = True
+            self.launch_sender_pipeline(left_pipeline)
+            self.launch_sender_pipeline(right_pipeline)
 
             # Start the pyrealsense2 capture thread
             LOGGER.info("Starting pyrealsense2 capture thread for Y8I...")
@@ -1988,6 +1991,7 @@ class GStreamerInterface:
                 return
                 
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
+            self.running = False
             pipeline.running = False 
 
             if self.rs_thread:
