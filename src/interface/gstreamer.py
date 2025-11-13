@@ -176,7 +176,7 @@ class GStreamerInterface:
             # Check if all appsrcs were found
             for stream_type in stream_types:
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
-                    LOGGER.error(f"Could not find 'src' in appsrc pipeline for {stream_type.value}! Thread stopping.")
+                    LOGGER.error(f"Could not find '{stream_types}_appsink' in appsrc pipeline for {stream_type.value}! Thread stopping.")
                     return
 
             # 2. Start RealSense
@@ -732,9 +732,9 @@ class GStreamerInterface:
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            appsrc = pipeline.gst_pipeline.get_by_name("depth_sink")
+            appsrc = pipeline.gst_pipeline.get_by_name("depth_appsink")
             if not appsrc:
-                raise RuntimeError("Could not find 'depth_sink' in LZ4 receiver pipeline")
+                raise RuntimeError("Could not find 'depth_appsink' in LZ4 receiver pipeline")
             
             reassembler = LZ4FrameReassembler()
             pipeline.running = True
@@ -819,9 +819,9 @@ class GStreamerInterface:
     
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
-        appsink = pipeline.gst_pipeline.get_by_name("depth_sink")
+        appsink = pipeline.gst_pipeline.get_by_name("depth_appsink")
         if not appsink:
-            raise RuntimeError("Could not find 'depth_sink' element in LZ4 sender pipeline")
+            raise RuntimeError("Could not find 'depth_appsink' element in LZ4 sender pipeline")
         
         appsink.connect("new-sample", self._on_sender_new_sample, pipeline)
         LOGGER.info(f"LZ4 Sender: appsink callback connected for port {pipeline.port}")
@@ -876,7 +876,7 @@ class GStreamerInterface:
     def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """Configure LZ4 receiver socket listener thread"""
         if not appsrc:
-            raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
+            raise RuntimeError("Could not find 'depth_appsink' in LZ4 receiver pipeline")
         
         pipeline.udp_socket.bind(("", pipeline.port))
         pipeline.udp_socket.settimeout(1.0)
