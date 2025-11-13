@@ -412,7 +412,11 @@ class GStreamerInterface:
             
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
-            sink = f"{protocol}sink host={server_ip} port={port}"
+            # sink = f"{protocol}sink host={server_ip} port={port}"
+            
+            # 測試用的新程式碼:
+            LOGGER.warning("!!!!!!!!!!!!!! FAKESINK TEST ENABLED !!!!!!!!!!!!!!")
+            sink = "fakesink sync=false"
 
             # 6. Assemble the full pipeline
             pipeline_str = (
@@ -442,6 +446,7 @@ class GStreamerInterface:
     
     def build_receiver_pipeline(
         self,
+        receiver_ip: str = "0.0.0.0",
         stream_type: StreamType
     ) -> GStreamerPipeline:
         """
@@ -482,7 +487,7 @@ class GStreamerInterface:
             sink = self._build_sink(stream_type)
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
-            receiver_ip = "0.0.0.0"
+            
             
             caps_str = (
                 f"application/x-rtp,media=video,clock-rate=90000,"
