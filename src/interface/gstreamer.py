@@ -364,6 +364,7 @@ class GStreamerInterface:
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
 
+            # *** THIS IS THE FIX ***
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
@@ -372,6 +373,7 @@ class GStreamerInterface:
                 f"{encoder} ! " # encoder already contains nvvidconv
                 f"{protocol}sink host={server_ip} port={port}"
             )
+            # *** END OF FIX ***
 
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
             LOGGER.info(f"Pipeline: {pipeline_str}")
@@ -712,6 +714,12 @@ class GStreamerInterface:
         """Launch standard H.264 sender (pyrealsense appsrc mode)"""
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
+            
+            # *** Add bus monitoring to sender as well for debugging ***
+            bus = pipeline.gst_pipeline.get_bus()
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message, pipeline)
+            
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             
             is_passive_stream = pipeline.stream_type == StreamType.INFRA2
@@ -819,6 +827,8 @@ class GStreamerInterface:
             LOGGER.error(f"Launch receiver failed: {e}", exc_info=True)
             self._cleanup_pipeline(pipeline)
             raise
+    
+    # ==================== Callback Methods ====================
     
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
@@ -938,6 +948,8 @@ class GStreamerInterface:
         finally:
             buffer.unmap(map_info)
         return Gst.FlowReturn.OK
+    
+    # ==================== Cleanup Methods ====================
     
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
