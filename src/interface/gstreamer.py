@@ -290,23 +290,20 @@ class GStreamerInterface:
 
             # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
-            LOGGER.info("Starting unified pyrealsense capture thread...")
-            self.rs_thread = threading.Thread(
-                target=self._pyrealsense_capture_loop,
-                args=(final_stream_list, pipelines),
-                daemon=True
-            )
-            self.rs_thread.start()
-            
             for stream_type in final_stream_list:
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
                 else:
                     raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
-            
-            # 3. Start the pyrealsense capture thread
-            
+
+            LOGGER.info("Starting unified pyrealsense capture thread...")
+            self.rs_thread = threading.Thread(
+                target=self._pyrealsense_capture_loop,
+                args=(final_stream_list, pipelines),
+                daemon=True
+            )
+            self.rs_thread.start()            
 
             LOGGER.info("All streams initiated via pyrealsense.")
             return True
