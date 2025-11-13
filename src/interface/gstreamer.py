@@ -732,9 +732,9 @@ class GStreamerInterface:
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            appsrc = pipeline.gst_pipeline.get_by_name("depth_appsink")
+            appsrc = pipeline.gst_pipeline.get_by_name("src")
             if not appsrc:
-                raise RuntimeError("Could not find 'depth_appsink' in LZ4 receiver pipeline")
+                raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
             
             reassembler = LZ4FrameReassembler()
             pipeline.running = True
@@ -876,7 +876,7 @@ class GStreamerInterface:
     def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """Configure LZ4 receiver socket listener thread"""
         if not appsrc:
-            raise RuntimeError("Could not find 'depth_appsink' in LZ4 receiver pipeline")
+            raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
         
         pipeline.udp_socket.bind(("", pipeline.port))
         pipeline.udp_socket.settimeout(1.0)
