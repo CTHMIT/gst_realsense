@@ -575,14 +575,14 @@ class GStreamerInterface:
                     # appsrc (BGR) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
                     # Note: build_sender_pipeline already does the BGR -> NV12 conversion
                     # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
-                    encoder_element = f"nvvidconv ! {nvmm_caps_str} {encoder_element_core}"
+                    encoder_element = None
                     LOGGER.info(f"Using HW encoder for COLOR: nvv4l2h264enc")
 
                 elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                     # appsrc (GRAY8) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
                     # Note: build_sender_pipeline already does the GRAY8 -> NV12 conversion
                     # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
-                    encoder_element = f"nvvidconv ! {nvmm_caps_str} {encoder_element_core}"
+                    encoder_element = None
                     LOGGER.info(f"Using HW encoder for GRAY8 stream ({stream_type.value}): nvv4l2h264enc")
                 else:
                     LOGGER.warning(f"Unknown stream type {stream_type} for HW encoder, falling back.")
