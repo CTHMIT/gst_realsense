@@ -528,7 +528,7 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
         
         if use_pyrealsense:
-            single_ir_width = y8i_width
+            single_ir_width = y8i_width // 2
         else:
             single_ir_width = y8i_width // 2
         
@@ -655,7 +655,7 @@ class GStreamerInterface:
             return
             
         # Get camera config
-        width = self.config.realsense_camera.width
+        width = self.config.realsense_camera.width // 2
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
@@ -938,7 +938,7 @@ class GStreamerInterface:
         """
         y8i_width = self.config.realsense_camera.width
         y8i_height = self.config.realsense_camera.height
-        single_ir_width = y8i_width
+        single_ir_width = y8i_width // 2
         
         left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)

@@ -12,9 +12,8 @@ import signal
 import argparse
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 import logging
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from interface.gstreamer import GStreamerInterface, StreamType
