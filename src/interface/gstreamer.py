@@ -659,31 +659,7 @@ class GStreamerInterface:
         else:
             self._launch_standard_sender(pipeline) # All H.264 streams
     
-    def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
-        """Launch LZ4 depth sender"""
-        try:
-            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
-            self._setup_lz4_sender(pipeline) # Set up appsink callback
-            
-            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-            if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
-            
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started LZ4 {pipeline.stream_type.value}")
-            else:
-                LOGGER.warning(f"Pipeline state: {state}")
-            
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            
-        except Exception as e:
-            LOGGER.error(f"Launch LZ4 sender failed: {e}")
-            self._cleanup_pipeline(pipeline)
-            raise
+    
     
     def _launch_standard_sender(self, pipeline: GStreamerPipeline):
         """Launch standard H.264 sender """
@@ -726,39 +702,6 @@ class GStreamerInterface:
         else:
             self._launch_standard_receiver(pipeline) 
     
-    def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
-        """Launch LZ4 depth receiver"""
-        try:
-            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
-            appsrc = pipeline.gst_pipeline.get_by_name("src")
-            if not appsrc:
-                raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
-            
-            reassembler = LZ4FrameReassembler()
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            
-            self._setup_lz4_receiver(pipeline, appsrc, reassembler)
-            
-            bus = pipeline.gst_pipeline.get_bus()
-            bus.add_signal_watch()
-            bus.connect("message", self._on_bus_message, pipeline)
-            
-            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-            if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
-            
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
-            
-        except Exception as e:
-            LOGGER.error(f"Launch LZ4 receiver failed: {e}")
-            self._cleanup_pipeline(pipeline)
-            raise
-    
     def _launch_standard_receiver(self, pipeline: GStreamerPipeline):
         """
         Launch standard H.264 receiver with enhanced debugging.
@@ -778,21 +721,21 @@ class GStreamerInterface:
                 appsink = pipeline.gst_pipeline.get_by_name("color_appsink")
                 if appsink:
                     LOGGER.info(f"Connecting color_appsink callback for {pipeline.stream_type.value}")
-                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                    appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
                     LOGGER.info(f"Running in display mode")
             if pipeline.stream_type == StreamType.INFRA1:
                 appsink = pipeline.gst_pipeline.get_by_name("ir1_appsink")
                 if appsink:
                     LOGGER.info(f"Connecting ir1_appsink callback for {pipeline.stream_type.value}")
-                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                    appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
                     LOGGER.info(f"Running in display mode")
             if pipeline.stream_type == StreamType.INFRA2:
                 appsink = pipeline.gst_pipeline.get_by_name("ir2_appsink")
                 if appsink:
                     LOGGER.info(f"Connecting ir2_appsink callback for {pipeline.stream_type.value}")
-                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                    appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
                     LOGGER.info(f"Running in display mode")
       
@@ -816,15 +759,98 @@ class GStreamerInterface:
             raise
     
     # ==================== Callback Methods ====================
-    
+
+    def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
+        """Launch LZ4 depth sender"""
+        try:
+            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
+            
+            self._setup_lz4_sender(pipeline) # Set up appsink callback
+            
+            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to set pipeline to PLAYING")
+            
+            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+            if state == Gst.State.PLAYING:
+                LOGGER.info(f"Started LZ4 {pipeline.stream_type.value}")
+            else:
+                LOGGER.warning(f"Pipeline state: {state}")
+            
+            pipeline.running = True
+            self.pipelines[pipeline.stream_type] = pipeline
+            
+        except Exception as e:
+            LOGGER.error(f"Launch LZ4 sender failed: {e}")
+            self._cleanup_pipeline(pipeline)
+            raise
+
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
-        appsink = pipeline.gst_pipeline.get_by_name("depth_appsink")
+        appsink = pipeline.gst_pipeline.get_by_name("sink")
         if not appsink:
-            raise RuntimeError("Could not find 'depth_appsink' element in LZ4 sender pipeline")
+            raise RuntimeError("Could not find 'sink' element in LZ4 sender pipeline")
         
         appsink.connect("new-sample", self._on_sender_new_sample, pipeline)
         LOGGER.info(f"LZ4 Sender: appsink callback connected for port {pipeline.port}")
+
+    def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
+        """Configure LZ4 receiver socket listener thread"""
+        if not appsrc:
+            raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
+        
+        pipeline.udp_socket.bind(("", pipeline.port))
+        pipeline.udp_socket.settimeout(1.0)
+        
+        pipeline.socket_thread = threading.Thread(
+            target=self._lz4_socket_listener,
+            args=(pipeline, appsrc, reassembler),
+            daemon=True
+        )
+        pipeline.socket_thread.start()
+        LOGGER.info(f"LZ4 Receiver: Socket listener started on port {pipeline.port}")
+
+    def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
+        """Launch LZ4 depth receiver"""
+        try:
+            pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
+            
+            appsrc = pipeline.gst_pipeline.get_by_name("src")
+            if not appsrc:
+                raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
+            
+            reassembler = LZ4FrameReassembler()
+            pipeline.running = True
+            self.pipelines[pipeline.stream_type] = pipeline
+            
+            self._setup_lz4_receiver(pipeline, appsrc, reassembler)
+            
+            bus = pipeline.gst_pipeline.get_bus()
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message, pipeline)
+
+            appsink = pipeline.gst_pipeline.get_by_name("depth_appsink")
+            if appsink:
+                LOGGER.info(f"Connecting depth_appsink callback for {pipeline.stream_type.value}")
+                appsink.connect("new-sample", self._on_new_sample, pipeline)
+            else:
+                LOGGER.info(f"Running in display mode for {pipeline.stream_type.value} (no appsink found)")
+            
+            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to set pipeline to PLAYING")
+            
+            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
+            if state == Gst.State.PLAYING:
+                LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
+            
+        except Exception as e:
+            LOGGER.error(f"Launch LZ4 receiver failed: {e}")
+            self._cleanup_pipeline(pipeline)
+            raise
+
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """Callback for new sample from appsink (LZ4 Sender)"""
@@ -873,21 +899,6 @@ class GStreamerInterface:
             buffer.unmap(map_info)
         return Gst.FlowReturn.OK
     
-    def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
-        """Configure LZ4 receiver socket listener thread"""
-        if not appsrc:
-            raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
-        
-        pipeline.udp_socket.bind(("", pipeline.port))
-        pipeline.udp_socket.settimeout(1.0)
-        
-        pipeline.socket_thread = threading.Thread(
-            target=self._lz4_socket_listener,
-            args=(pipeline, appsrc, reassembler),
-            daemon=True
-        )
-        pipeline.socket_thread.start()
-        LOGGER.info(f"LZ4 Receiver: Socket listener started on port {pipeline.port}")
 
     def _lz4_socket_listener(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """
@@ -909,7 +920,7 @@ class GStreamerInterface:
                 LOGGER.warning(f"LZ4 decompression/push error: {e}")
         LOGGER.info(f"LZ4 socket listener for port {pipeline.port} stopping.")
     
-    def _on_ir_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
+    def _on_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """Callback for IR (left or right) receiver"""
         sample = appsink.pull_sample()
         if not sample: return Gst.FlowReturn.ERROR
