@@ -349,7 +349,8 @@ class GStreamerInterface:
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
-                port=port, pt=pt
+                port=port, 
+                pt=pt
             )
 
         elif stream_type == StreamType.COLOR:
@@ -378,7 +379,8 @@ class GStreamerInterface:
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
                 stream_type=stream_type,
-                port=port, pt=pt
+                port=port, 
+                pt=pt
             )
         
         elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
@@ -740,7 +742,6 @@ class GStreamerInterface:
         if pipeline.stream_type == StreamType.DEPTH and scfg.encoding == "lz4":
             self._launch_lz4_receiver(pipeline)
         else:
-            # This now correctly handles COLOR, INFRA1, and INFRA2
             self._launch_standard_receiver(pipeline) 
     
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
@@ -759,7 +760,6 @@ class GStreamerInterface:
             
             self._setup_lz4_receiver(pipeline, appsrc, reassembler)
             
-            # *** FIX 1c: Add bus monitoring to LZ4 receiver ***
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
@@ -820,8 +820,6 @@ class GStreamerInterface:
             self._cleanup_pipeline(pipeline)
             raise
     
-    # ==================== Callback Methods ====================
-    
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
         appsink = pipeline.gst_pipeline.get_by_name("sink")
@@ -862,7 +860,7 @@ class GStreamerInterface:
             CHUNK_SIZE = 60 * 1024 
             total_chunks = (data_len + CHUNK_SIZE - 1) // CHUNK_SIZE
             HEADER_FORMAT = "!IHH" 
-            HEADER_SIZE = struct.calcsize(self.HEADER_FORMAT)
+            HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
             data_to_send_size = CHUNK_SIZE - HEADER_SIZE
             
             for i in range(total_chunks):
@@ -940,8 +938,6 @@ class GStreamerInterface:
         finally:
             buffer.unmap(map_info)
         return Gst.FlowReturn.OK
-    
-    # ==================== Cleanup Methods ====================
     
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
