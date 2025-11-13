@@ -1046,7 +1046,7 @@ class GStreamerInterface:
                     f"nvv4l2h264enc bitrate={bitrate_bps} "
                     f"insert-sps-pps=true "
                     f"control-rate=1 " 
-                    f"profile=4" # 4=High, 2=Baseline
+                    f"profile=4 " # 4=High, 2=Baseline
                     f"iframeinterval=30"
                 )
                 
