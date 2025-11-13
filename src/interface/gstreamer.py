@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Unified GStreamer Interface for D435i Camera Streaming
-(Unified pyrealsense SDK Mode) - FIXED for AGX Orin Hardware Encoding
 
 Supports:
 - Depth: 16-bit lossless (LZ4) via pyrealsense
@@ -320,13 +319,9 @@ class GStreamerInterface:
     ) -> GStreamerPipeline:
         """
         Build GStreamer sender pipeline for specified stream type
-        (pyrealsense appsrc mode)
         
         Handles: COLOR, DEPTH, INFRA1, INFRA2
         
-        FIXED: Now dynamically builds the conversion pipeline based on
-        whether a HW (NVMM) or SW (CPU) encoder is selected, preventing
-        a pipeline crash when HW encoding is unavailable.
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
@@ -355,20 +350,17 @@ class GStreamerInterface:
                 port=port, 
                 pt=pt
             )
-
-        # --- START FIX: Merged COLOR and INFRA logic ---
+        
         elif stream_type == StreamType.COLOR or stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
             
-            # 1. Define base caps
             appsrc_caps_str = ""
             if stream_type == StreamType.COLOR:
                 LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
                 appsrc_caps_str = f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
-            else: # INFRA1 or INFRA2
+            else: 
                 LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
                 appsrc_caps_str = f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
 
-            # 2. Define conversion caps (NV12 is the common target for H.264)
             cpu_nv12_caps_str = (
                 f"video/x-raw,format=NV12,"
                 f"width={width},height={height},framerate={fps}/1"
@@ -378,14 +370,10 @@ class GStreamerInterface:
                 f"width={width},height={height},framerate={fps}/1"
             )
 
-            # 3. Get the encoder element AND its type (HW vs SW)
-            #    _build_encoder now returns (encoder_string, is_hw_bool)
             encoder_element, is_hw_encoder = self._build_encoder(stream_type, stream_config)
 
-            # 4. Build the conversion pipeline string based on the encoder type
             conversion_pipeline_str = ""
             if is_hw_encoder:
-                # HW Path: (BGR or GRAY8) -> NV12(CPU) -> NV12(NVMM) -> HW Encoder
                 conversion_pipeline_str = (
                     f"videoconvert ! "
                     f"{cpu_nv12_caps_str} ! "
@@ -394,31 +382,22 @@ class GStreamerInterface:
                     f"{encoder_element}"
                 )
             else:
-                # SW Path: (BGR or GRAY8) -> NV12(CPU) -> SW Encoder
-                # Note: x264enc can take NV12. videoconvert handles the conversion.
                 conversion_pipeline_str = (
                     f"videoconvert ! "
                     f"{cpu_nv12_caps_str} ! "
                     f"{encoder_element}"
                 )
 
-            # 5. Build the common payloader and sink
             payloader = f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
             
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
-            # sink = f"{protocol}sink host={server_ip} port={port}"
-            
-            # # 測試用的新程式碼:
-            # LOGGER.warning("!!!!!!!!!!!!!! FAKESINK TEST ENABLED !!!!!!!!!!!!!!")
-            # sink = "fakesink sync=false"
 
             sink = (
                 f"{protocol}sink host={server_ip} port={port} "
                 f"sync=false auto-multicast=false"
             )
 
-            # 6. Assemble the full pipeline
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true caps=\"{appsrc_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
@@ -426,8 +405,6 @@ class GStreamerInterface:
                 f"{payloader} ! " 
                 f"{sink}"
             )
-            
-            # --- END FIX ---
 
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
             LOGGER.info(f"Pipeline: {pipeline_str}")
@@ -564,11 +541,6 @@ class GStreamerInterface:
         """
         Build encoder element string and return its type.
         
-        FIXED: This function now returns the encoder element string AND
-        a boolean flag indicating if it's a hardware (NVMM) encoder.
-        This allows the pipeline builder to construct the correct
-        conversion chain.
-
         Returns:
             Tuple[str, bool]: (encoder_element_string, is_hw_encoder)
         """
@@ -704,7 +676,7 @@ class GStreamerInterface:
             raise
     
     def _launch_standard_sender(self, pipeline: GStreamerPipeline):
-        """Launch standard H.264 sender (pyrealsense appsrc mode)"""
+        """Launch standard H.264 sender """
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
