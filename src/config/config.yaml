@@ -5,7 +5,7 @@ network:
     nvenc_available: true
 
   server:
-    ip: "10.28.121.28"  
+    ip: "10.28.134.82"  
     type: "x86_64"
     cuda_available: true
 
