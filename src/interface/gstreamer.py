@@ -271,7 +271,6 @@ class GStreamerInterface:
 
         pipelines = {}
         
-        # This function now expects explicit INFRA1/INFRA2 from sender.py
         final_stream_list = list(set(stream_types))
 
         try:
@@ -449,6 +448,7 @@ class GStreamerInterface:
         self,
         stream_type: StreamType,
         receiver_ip: str = "0.0.0.0",
+        only_display: bool = False, # 確保 'only_display' 在函式簽名中
     ) -> GStreamerPipeline:
         """
         Build GStreamer receiver pipeline for specified stream type
@@ -465,13 +465,23 @@ class GStreamerInterface:
             
             sink = self._build_sink(stream_type)
 
-            pipeline_str = (
-                f"appsrc name=src format=time is-live=true ! "
-                f"queue max-size-buffers=2 ! "
-                f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                f"videoconvert ! "
-                f"{sink}"
-            )
+            if only_display:
+                LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
+                pipeline_str = (
+                    f"appsrc name=src format=time is-live=true ! "
+                    f"queue max-size-buffers=2 ! "
+                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                    f"videoconvert ! "
+                    f"{sink}"
+                )
+            else:
+                LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Appsink Only)")
+                pipeline_str = (
+                    f"appsrc name=src format=time is-live=true ! "
+                    f"queue max-size-buffers=2 ! "
+                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                    f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                )
 
             LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -482,13 +492,12 @@ class GStreamerInterface:
                 port=port, pt=pt
             )
 
-        elif stream_type == StreamType.COLOR:
-            # Standard H.264 receiver
+        elif stream_type in [StreamType.COLOR, StreamType.INFRA1, StreamType.INFRA2]:
+            
             decoder_core = self._build_decoder(stream_type, stream_config)
             sink = self._build_sink(stream_type)
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
-            
             
             caps_str = (
                 f"application/x-rtp,media=video,clock-rate=90000,"
@@ -497,9 +506,28 @@ class GStreamerInterface:
             
             pipeline_str = (
                 f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
-                f"rtpjitterbuffer latency={latency} ! rtph264depay ! "                                
-                f"{decoder_core} ! videoconvert ! queue ! {sink}"
+                f"rtpjitterbuffer latency={latency} ! "
+                f"rtph264depay ! " 
+                f"{decoder_core} ! " # "h264parse ! nvh264dec"
+                f"videoconvert ! "
             )
+
+            if stream_type == StreamType.COLOR:
+                LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
+                pipeline_str += f"queue ! {sink}"
+
+            elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                width = self.config.realsense_camera.width
+                height = self.config.realsense_camera.height
+                pipeline_str += f"video/x-raw,format=GRAY8,width={width},height={height} ! queue ! "
+
+                if only_display:
+                    LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
+                    pipeline_str += sink
+                else:
+                    LOGGER.info(f"Building {stream_type.value} H.264 receiver (Appsink Only)")
+                    pipeline_str += "appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -509,42 +537,9 @@ class GStreamerInterface:
                 stream_type=stream_type,
                 port=port, pt=pt
             )
-        elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-            LOGGER.info(f"Building {stream_type.value} H.264 receiver pipeline")
-            width = self.config.realsense_camera.width
-            height = self.config.realsense_camera.height
-            
-            caps_str = (
-                f"application/x-rtp,media=video,clock-rate=90000,"
-                f"encoding-name=H264,payload={pt}"
-            )
-            decoder_element = self._get_decoder_element()
-            latency = self.config.streaming.jitter_buffer.latency
-            protocol = self.config.network.transport.protocol
-            receiver_ip = "0.0.0.0"
-            
-            sink = self._build_sink(stream_type)
-
-            pipeline_str = (
-                f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
-                f"rtpjitterbuffer latency={latency} ! "
-                f"rtph264depay ! h264parse ! {decoder_element} ! videoconvert ! "
-                f"video/x-raw,format=GRAY8,width={width},height={height} ! "
-                f"tee name=t ! "
-                f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
-                f"t. ! queue ! {sink}"
-            )
-            
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
-            
-            return GStreamerPipeline(
-                pipeline_str=pipeline_str,
-                stream_type=stream_type,
-                port=port, pt=pt
-            )
         else:
             raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}")
-    
+        
     # ==================== Helper Methods ====================
     
     def _get_decoder_element(self) -> str:
@@ -623,25 +618,7 @@ class GStreamerInterface:
         """
         decoder_element = self._get_decoder_element()
         
-        if "nv" in decoder_element:
-            hw_converter = None
-            if Gst.ElementFactory.find("nvvideoconvert"):
-                hw_converter = "nvvideoconvert"
-            elif Gst.ElementFactory.find("nvcudaconvert"): 
-                hw_converter = "nvcudaconvert"
-
-            if hw_converter:
-                LOGGER.info(f"Using HW decoder path: {decoder_element} ! {hw_converter}")
-                return f"h264parse ! {decoder_element} ! {hw_converter}"
-            else:
-                LOGGER.warning(
-                    f"NVIDIA decoder '{decoder_element}' found, but no "
-                    f"'nvvideoconvert' or 'nvcudaconvert' found. "
-                    "Pipeline will likely fail!"
-                )
-                return f"h264parse ! {decoder_element}"
-        else:
-            return f"h264parse ! {decoder_element}"
+        return f"h264parse ! {decoder_element}"
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
@@ -826,9 +803,8 @@ class GStreamerInterface:
                     LOGGER.info(f"Connecting ir_appsink callback for {pipeline.stream_type.value}")
                     appsink.connect("new-sample", self._on_ir_sample, pipeline)
                 else:
-                    LOGGER.warning(f"Could not find 'ir_appsink' for {pipeline.stream_type.value}. Frame processing callback disabled.")
-    
-
+                    LOGGER.info(f"No 'ir_appsink' found for {pipeline.stream_type.value}. (Running in --only-display mode?)")
+      
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
@@ -1042,7 +1018,9 @@ class GStreamerInterface:
         if mode == "sender":
             pipeline = self.build_sender_pipeline(stream_type)
         else:
-            pipeline = self.build_receiver_pipeline(stream_type)
+            pipeline = self.build_receiver_pipeline(
+                stream_type
+                )
         return pipeline.pipeline_str
     
     def get_pipeline_status(self) -> Dict[str, bool]:

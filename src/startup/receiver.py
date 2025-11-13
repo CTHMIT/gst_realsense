@@ -41,7 +41,8 @@ class StreamingReceiver:
     
     def start(
         self,
-        stream_types: List[StreamType]
+        stream_types: List[StreamType],
+        only_display: bool = False
     ):
         """
         Start receiving streams.
@@ -65,7 +66,7 @@ class StreamingReceiver:
             for stream_type in stream_types:                
                 
                 if stream_type in [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2]:
-                    success = self._start_single_stream(stream_type)
+                    success = self._start_single_stream(stream_type, only_display)
                     if success:
                         started_count += 1
             
@@ -102,10 +103,13 @@ class StreamingReceiver:
             self.stop()
             return False
     
-    def _start_single_stream(self, stream_type: StreamType) -> bool:
+    def _start_single_stream(self, stream_type: StreamType, only_display: bool = False) -> bool:
         """Start a single standard stream receiver (Color, Depth LZ4)"""
         try:
-            pipeline = self.interface.build_receiver_pipeline(stream_type)
+            pipeline = self.interface.build_receiver_pipeline(
+                stream_type,
+                only_display=only_display,
+                )
             
             self.interface.launch_receiver_pipeline(pipeline)
             self.active_pipelines.append(pipeline)
@@ -117,25 +121,6 @@ class StreamingReceiver:
             LOGGER.error(f"  ✗ {stream_type.value}: Failed - {e}")
             return False
 
-    def _start_stereo_receive(self) -> bool:
-        """Start Stereo in merge mode (receive left + right IR)"""
-        try:
-            left_pipeline, right_pipeline = self.interface.build_stereo_receiver_pipelines()
-            
-            self.interface.launch_receiver_pipeline(left_pipeline)
-            self.interface.launch_receiver_pipeline(right_pipeline)
-            
-            self.active_pipelines.extend([left_pipeline, right_pipeline])
-            
-            LOGGER.info(f"  ✓ Stereo (IR1 + IR2):")
-            LOGGER.info(f"    - Left IR (INFRA1): port {left_pipeline.port}")
-            LOGGER.info(f"    - Right IR (INFRA2): port {right_pipeline.port}")
-            return True
-            
-        except Exception as e:
-            LOGGER.error(f"  ✗ Stereo (IR1/2): Failed - {e}")
-            return False
-    
     def stop(self):
         """Stop all receivers"""
         if self.running:
@@ -196,7 +181,11 @@ Examples:
     stream_group.add_argument("--depth", action="store_true", help="Enable depth stream (LZ4)")
     stream_group.add_argument("--infra1", action="store_true", help="Enable left infrared (IR1 only)")
     stream_group.add_argument("--infra2", action="store_true", help="Enable right infrared (IR2 only)")
-    
+    parser.add_argument(
+        "--only-display", 
+        action="store_true", 
+        help="Only display streams, do not process them in the app (disables appsink)"
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -233,7 +222,8 @@ def main():
     try:
         receiver = StreamingReceiver(args.config)
         success = receiver.start(
-            stream_types=list(set(stream_types)) #
+            stream_types=list(set(stream_types)),
+            only_display=args.only_display
         )
         
         if success:
