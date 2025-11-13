@@ -521,7 +521,7 @@ class GStreamerInterface:
         y8i_height = self.config.realsense_camera.height  # e.g., 240
         fps = self.config.realsense_camera.fps
         
-        single_ir_width = y8i_width // 2
+        single_ir_width = y8i_width
         
         # Get ports
         left_port = self._get_port(StreamType.INFRA_LEFT)
@@ -809,7 +809,7 @@ class GStreamerInterface:
         """
         y8i_width = self.config.realsense_camera.width
         y8i_height = self.config.realsense_camera.height
-        single_ir_width = y8i_width // 2
+        single_ir_width = y8i_width
         
         left_port = self._get_port(StreamType.INFRA_LEFT)
         right_port = self._get_port(StreamType.INFRA_RIGHT)

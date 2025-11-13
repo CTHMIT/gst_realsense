@@ -99,6 +99,7 @@ class StreamingSender:
         # Start streams
         LOGGER.info(f"Starting streams...")
         try:
+            self.running = True
             started_count = 0
             
             for stream_type in stream_types:
@@ -277,7 +278,7 @@ class StreamingSender:
             return
             
         # Get camera config
-        width = self.config.realsense_camera.width // 2 # Y8I width is 2x IR width
+        width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
