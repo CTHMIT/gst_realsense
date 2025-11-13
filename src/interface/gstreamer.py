@@ -414,9 +414,14 @@ class GStreamerInterface:
             server_ip = self.config.network.server.ip
             # sink = f"{protocol}sink host={server_ip} port={port}"
             
-            # 測試用的新程式碼:
-            LOGGER.warning("!!!!!!!!!!!!!! FAKESINK TEST ENABLED !!!!!!!!!!!!!!")
-            sink = "fakesink sync=false"
+            # # 測試用的新程式碼:
+            # LOGGER.warning("!!!!!!!!!!!!!! FAKESINK TEST ENABLED !!!!!!!!!!!!!!")
+            # sink = "fakesink sync=false"
+
+            sink = (
+                f"{protocol}sink host={server_ip} port={port} "
+                f"sync=false auto-multicast=false"
+            )
 
             # 6. Assemble the full pipeline
             pipeline_str = (
