@@ -367,7 +367,7 @@ class GStreamerInterface:
                 f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
-                f"video/x-raw,format=NV12 ! "
+                f"video/x-raw,format=I420 ! "
                 f"{encoder} ! " 
                 f"{protocol}sink host={server_ip} port={port}"
             )
@@ -389,7 +389,7 @@ class GStreamerInterface:
                 f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
             )
             cpu_nv12_caps_str = (
-                f"video/x-raw,format=NV12,"
+                f"video/x-raw,format=I420,"
                 f"width={width},height={height},framerate={fps}/1"
             )
             nvmm_caps_str = (
@@ -406,7 +406,7 @@ class GStreamerInterface:
                 f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! videoconvert ! "
                 f"{cpu_nv12_caps_str} ! nvvidconv ! "
-                f"{nvmm_caps_str} ! {encoder} ! {sink}"        
+                f"{encoder} ! {sink}"        
             )
 
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}, pt {pt}")
