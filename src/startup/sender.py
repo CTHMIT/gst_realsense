@@ -48,7 +48,7 @@ class StreamingSender:
         """
         LOGGER.info("RealSense D435i Streaming Sender")
         
-        LOGGER.info(f"Client: {self.config.network.client.ip} ({self.config.network.client.name})")
+        LOGGER.info(f"Client: {self.config.network.client.ip} ({self.config.network.client.type})")
         LOGGER.info(f"Server: {self.config.network.server.ip}")
         LOGGER.info(f"Protocol: {self.config.network.transport.protocol.upper()}")
         LOGGER.info(f"Resolution: {self.config.realsense_camera.width}x{self.config.realsense_camera.height} @ {self.config.realsense_camera.fps} fps")
