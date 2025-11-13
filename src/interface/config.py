@@ -14,7 +14,7 @@ from utils.logger import LOGGER
 
 class NetworkDevice(BaseModel):
     """Network device configuration"""
-    ip: str = Field(..., description="IP address of the device")
+    ip: str = Field("0,0,0,0", description="IP address of the device")
     type: Literal["jetson_agx_orin", "x86_64"] = Field(..., description="Device type")
     nvenc_available: Optional[bool] = Field(None, description="NVENC hardware encoding availability")
     cuda_available: Optional[bool] = Field(None, description="CUDA availability")
@@ -212,10 +212,9 @@ class StreamingConfigManager(BaseSettings):
 
 if __name__ == "__main__":
     # Load configuration
-    config = StreamingConfigManager.from_yaml("config.yaml")
+    config = StreamingConfigManager.from_yaml("src/config/config.yaml")
     
     # Access configuration
-    LOGGER.info(f"Client IP: {config.network.client.ip}")
     LOGGER.info(f"Server IP: {config.network.server.ip}")
     LOGGER.info(f"Resolution: {config.realsense_camera.resolution}")
     LOGGER.info(f"Color Port: {config.get_stream_port('color')}")

@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=1.24.0",
     "opencv-python>=4.8.0",
     "lz4>=4.4.5",
+    "pyrealsense2>=2.56.5.9235",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"

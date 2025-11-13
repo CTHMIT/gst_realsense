@@ -5,7 +5,7 @@ network:
     nvenc_available: true
 
   server:
-    ip: "10.28.121.28"  
+    ip: "10.28.134.82"  
     type: "x86_64"
     cuda_available: true
 
@@ -48,9 +48,9 @@ realsense_camera:
 
       depth:
         camera_format: "Z16"   
-        encoding: "h264"    
+        encoding: "lz4"    
         port: 5020        
-        gstreamer_format: "Z16" 
+        gstreamer_format: "gray16-le" 
         ros_fomat: "16UC1" 
         bitrate: 8000
 

@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:99ef053c1c6fdf4299a78c0d99fc75978fbd976f6ba6495a6dae46be2eac3239"
+content_hash = "sha256:6eecdcc1de839a25c32802adeec5a5e215a29f03e8f100e5cf7952052e62538e"
 
 [[metadata.targets]]
 requires_python = "==3.10.*"
@@ -151,6 +151,18 @@ dependencies = [
 files = [
     {file = "pydantic_settings-2.12.0-py3-none-any.whl", hash = "sha256:fddb9fd99a5b18da837b29710391e945b1e30c135477f484084ee513adb93809"},
     {file = "pydantic_settings-2.12.0.tar.gz", hash = "sha256:005538ef951e3c2a68e1c08b292b5f2e71490def8589d4221b95dab00dafcfd0"},
+]
+
+[[package]]
+name = "pyrealsense2"
+version = "2.56.5.9235"
+requires_python = ">=3.9"
+summary = "Python Wrapper for Intel Realsense SDK 2.0."
+groups = ["default"]
+files = [
+    {file = "pyrealsense2-2.56.5.9235-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:050301dcb13abe49e14449b010732a5b7ec50d0de829c8f8a9356944518d5784"},
+    {file = "pyrealsense2-2.56.5.9235-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:d68a174f5c3bf43d6eef3aac0de114b4802052c8a98a92dcbb8ecca0f98509d4"},
+    {file = "pyrealsense2-2.56.5.9235-cp310-cp310-win_amd64.whl", hash = "sha256:c0b097b2b3d340a34fd61ca8c7b46e084ffca490318c4cb7f6af0f8f44f94bd9"},
 ]
 
 [[package]]
