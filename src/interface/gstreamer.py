@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Unified GStreamer Interface for D435i Camera Streaming
-(Unified pyrealsense SDK Mode)
+(Unified pyrealsense SDK Mode) - FIXED for AGX Orin Hardware Encoding
 
 Supports:
 - Depth: 16-bit lossless (LZ4) via pyrealsense
-- Color: H.264 stream via pyrealsense
-- Infrared: Left/Right infrared streams via pyrealsense
+- Color: H.264 stream via pyrealsense with NVENC
+- Infrared: Left/Right infrared streams via pyrealsense with NVENC
 """
 
 from typing import Literal, Optional, Callable, Dict, List, Tuple
@@ -323,6 +323,8 @@ class GStreamerInterface:
         (pyrealsense appsrc mode)
         
         Handles: COLOR, DEPTH, INFRA1, INFRA2
+        
+        FIXED: All H.264 streams now properly convert to NVMM before encoding
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
@@ -355,19 +357,31 @@ class GStreamerInterface:
         elif stream_type == StreamType.COLOR:
             LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
             
+            # Define caps at each stage
             color_caps_str = (
                 f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
+            )
+            cpu_nv12_caps_str = (
+                f"video/x-raw,format=NV12,"
+                f"width={width},height={height},framerate={fps}/1"
+            )
+            nvmm_caps_str = (
+                f"video/x-raw(memory:NVMM),format=NV12,"
+                f"width={width},height={height},framerate={fps}/1"
             )
 
             encoder = self._build_encoder(stream_type, stream_config)
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
 
+            # FIXED: Properly convert BGR -> NV12 (CPU) -> NVMM before encoder
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
-                f"video/x-raw,format=I420 ! "
+                f"{cpu_nv12_caps_str} ! "
+                f"nvvidconv ! "
+                f"{nvmm_caps_str} ! "
                 f"{encoder} ! " 
                 f"{protocol}sink host={server_ip} port={port}"
             )
@@ -385,11 +399,12 @@ class GStreamerInterface:
         elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
             LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
 
+            # Define caps at each stage
             ir_caps_str = (
                 f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
             )
             cpu_nv12_caps_str = (
-                f"video/x-raw,format=I420,"
+                f"video/x-raw,format=NV12,"
                 f"width={width},height={height},framerate={fps}/1"
             )
             nvmm_caps_str = (
@@ -402,11 +417,16 @@ class GStreamerInterface:
             server_ip = self.config.network.server.ip
             sink = f"{protocol}sink host={server_ip} port={port}"
 
+            # Pipeline: GRAY8 -> NV12 (CPU) -> NVMM -> encoder
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-                f"queue max-size-buffers=2 ! videoconvert ! "
-                f"{cpu_nv12_caps_str} ! nvvidconv ! "
-                f"{encoder} ! {sink}"        
+                f"queue max-size-buffers=2 ! "
+                f"videoconvert ! "
+                f"{cpu_nv12_caps_str} ! "
+                f"nvvidconv ! "
+                f"{nvmm_caps_str} ! "
+                f"{encoder} ! "
+                f"{sink}"
             )
 
             LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}, pt {pt}")
@@ -440,7 +460,6 @@ class GStreamerInterface:
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
             
-            # *** FIX 1a: Use the sink helper ***
             sink = self._build_sink(stream_type)
 
             pipeline_str = (
@@ -448,7 +467,7 @@ class GStreamerInterface:
                 f"queue max-size-buffers=2 ! "
                 f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
                 f"videoconvert ! "
-                f"{sink}" # *** Use variable instead of hard-coded autovideosink
+                f"{sink}"
             )
 
             LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
@@ -463,7 +482,7 @@ class GStreamerInterface:
         elif stream_type == StreamType.COLOR:
             # Standard H.264 receiver
             decoder_core = self._build_decoder(stream_type, stream_config)
-            sink = self._build_sink(stream_type) # This was already correct
+            sink = self._build_sink(stream_type)
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
             receiver_ip = "0.0.0.0"
@@ -499,7 +518,7 @@ class GStreamerInterface:
             decoder_element = self._get_decoder_element()
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
-            receiver_ip = "0.0.0.0" # Bind to all interfaces for receiving
+            receiver_ip = "0.0.0.0"
             
             sink = self._build_sink(stream_type)
 
@@ -510,7 +529,7 @@ class GStreamerInterface:
                 f"video/x-raw,format=GRAY8,width={width},height={height} ! "
                 f"tee name=t ! "
                 f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
-                f"t. ! queue ! {sink}" # *** Use variable instead of hard-coded autovideosink
+                f"t. ! queue ! {sink}"
             )
             
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -548,53 +567,39 @@ class GStreamerInterface:
         stream_type: StreamType,
         stream_config: StreamConfig
     ) -> str:
-        """Build encoder element string"""
+        """
+        Build encoder element string
+        
+        FIXED: Assumes input is already in NVMM format from build_sender_pipeline
+        Only handles encoder configuration and RTP payloader
+        """
         bitrate = stream_config.bitrate
-        codec = self.config.streaming.rtp.codec # nvv4l2h264enc
+        codec = self.config.streaming.rtp.codec
 
         if stream_config.encoding == "h264":
             encoder_element = None
+            
+            # Check if hardware encoding is available and enabled
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
+                bitrate_bps = bitrate * 1000
                 
-                bitrate_bps = bitrate * 1000  
-                encoder_element_core = (
+                # FIXED: No more nvvidconv here - input is already NVMM from pipeline
+                encoder_element = (
                     f"nvv4l2h264enc bitrate={bitrate_bps} "
-                    f"insert-sps-pps=true control-rate=1 " 
+                    f"insert-sps-pps=true control-rate=1 "
                     f"profile=4 iframeinterval=30"
                 )
-                
-                width = self.config.realsense_camera.width
-                height = self.config.realsense_camera.height
-                fps = self.config.realsense_camera.fps
-                nvmm_caps_str = (
-                    f"video/x-raw(memory:NVMM),format=NV12,"
-                    f"width={width},height={height},framerate={fps}/1 ! "
-                )
-
-                if stream_type == StreamType.COLOR:
-                    # appsrc (BGR) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
-                    # Note: build_sender_pipeline already does the BGR -> NV12 conversion
-                    # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
-                    encoder_element = None
-                    LOGGER.info(f"Using HW encoder for COLOR: nvv4l2h264enc")
-
-                elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                    # appsrc (GRAY8) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
-                    # Note: build_sender_pipeline already does the GRAY8 -> NV12 conversion
-                    # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
-                    encoder_element = None
-                    LOGGER.info(f"Using HW encoder for GRAY8 stream ({stream_type.value}): nvv4l2h264enc")
-                else:
-                    LOGGER.warning(f"Unknown stream type {stream_type} for HW encoder, falling back.")
-                    encoder_element = None 
-
+                LOGGER.info(f"Using HW encoder (nvv4l2h264enc) for {stream_type.value}")
+            
+            # Fallback to software encoder
             if encoder_element is None:
-                LOGGER.info("Falling back to software encoder: x264enc")
+                LOGGER.info(f"Using SW encoder (x264enc) for {stream_type.value}")
                 encoder_element = (
                     f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate} "
                     f"key-int-max=30"
                 )
 
+            # Add RTP payloader
             pt = self._get_payload_type(stream_type)
             return (
                 f"{encoder_element} ! "
@@ -705,7 +710,7 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # *** Add bus monitoring to sender as well for debugging ***
+            # Add bus monitoring to sender as well for debugging
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
@@ -830,14 +835,7 @@ class GStreamerInterface:
         LOGGER.info(f"LZ4 Sender: appsink callback connected for port {pipeline.port}")
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
-        """
-        Moves `start_pyrealsense_streams` logic to build both pipelines 
-        if `INFRA1` or `INFRA2` is present, 
-        `launch_sender_pipeline` logic to handle H.264/LZ4, 
-        `launch_receiver_pipeline` logic, `build_receiver_pipeline` to raise error for IR, 
-        and adds `_start_stereo_receive` to `receiver.py`.        
-        Callback for new sample from appsink (LZ4 Sender)
-        """
+        """Callback for new sample from appsink (LZ4 Sender)"""
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.OK
