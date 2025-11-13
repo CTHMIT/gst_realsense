@@ -290,6 +290,14 @@ class GStreamerInterface:
 
             # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
+            LOGGER.info("Starting unified pyrealsense capture thread...")
+            self.rs_thread = threading.Thread(
+                target=self._pyrealsense_capture_loop,
+                args=(final_stream_list, pipelines),
+                daemon=True
+            )
+            self.rs_thread.start()
+            
             for stream_type in final_stream_list:
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
@@ -298,13 +306,7 @@ class GStreamerInterface:
                     raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
             
             # 3. Start the pyrealsense capture thread
-            LOGGER.info("Starting unified pyrealsense capture thread...")
-            self.rs_thread = threading.Thread(
-                target=self._pyrealsense_capture_loop,
-                args=(final_stream_list, pipelines),
-                daemon=True
-            )
-            self.rs_thread.start()
+            
 
             LOGGER.info("All streams initiated via pyrealsense.")
             return True
@@ -504,7 +506,6 @@ class GStreamerInterface:
             protocol = self.config.network.transport.protocol
             receiver_ip = "0.0.0.0" # Bind to all interfaces for receiving
             
-            # *** FIX 1b: Use the sink helper ***
             sink = self._build_sink(stream_type)
 
             pipeline_str = (
@@ -619,17 +620,10 @@ class GStreamerInterface:
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
         
-        # *** FIX 2: Force xvimagesink for stability ***
-        # autovideosink can be unreliable. xvimagesink is a common X11 sink.
-        # If this fails, try "glimagesink sync=false"
         LOGGER.info("Using xvimagesink for display.")
         return (
             "xvimagesink sync=false"
         )
-        # Original:
-        # return (
-        #     "autovideosink sync=false"
-        # )
     
     def _on_bus_message(self, bus, message, pipeline):
         """Handle GStreamer bus messages for debugging"""
