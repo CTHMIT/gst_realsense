@@ -491,16 +491,28 @@ class GStreamerInterface:
 
             if stream_type == StreamType.COLOR:
                 LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
-                pipeline_str += f"{sink}"
-
-            elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                if only_display:
+                    pipeline_str += f"{sink}"
+                else:
+                    LOGGER.info(f"Building {stream_type.value} H.264 receiver (Appsink Only)")
+                    pipeline_str += "appsink name=color_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+            
+            elif stream_type == StreamType.INFRA1:
                 
                 if only_display:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
                     pipeline_str += sink
                 else:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver (Appsink Only)")
-                    pipeline_str += "appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                    pipeline_str += "appsink name=ir1_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+            elif stream_type == StreamType.INFRA2:
+                
+                if only_display:
+                    LOGGER.info(f"Building {stream_type.value} H.264 receiver (Display Only)")
+                    pipeline_str += sink
+                else:
+                    LOGGER.info(f"Building {stream_type.value} H.264 receiver (Appsink Only)")
+                    pipeline_str += "appsink name=ir2_appsink emit-signals=true drop=true max-buffers=1 sync=false"
             
             LOGGER.info(f"Built {stream_config.encoding} receiver pipeline for {stream_type.value} on port {port}, pt {pt}")
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -512,8 +524,6 @@ class GStreamerInterface:
             )
         else:
             raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}")
-        
-    # ==================== Helper Methods ====================
     
     def _get_decoder_element(self) -> str:
         """Get the appropriate H.264 decoder element based on config"""
@@ -680,7 +690,6 @@ class GStreamerInterface:
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
-            # Add bus monitoring to sender as well for debugging
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
@@ -765,13 +774,27 @@ class GStreamerInterface:
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
 
-            if pipeline.stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                appsink = pipeline.gst_pipeline.get_by_name("ir_appsink")
+            if pipeline.stream_type ==  StreamType.COLOR:
+                appsink = pipeline.gst_pipeline.get_by_name("color_appsink")
                 if appsink:
-                    LOGGER.info(f"Connecting ir_appsink callback for {pipeline.stream_type.value}")
+                    LOGGER.info(f"Connecting color_appsink callback for {pipeline.stream_type.value}")
                     appsink.connect("new-sample", self._on_ir_sample, pipeline)
                 else:
-                    LOGGER.info(f"No 'ir_appsink' found for {pipeline.stream_type.value}. (Running in --only-display mode?)")
+                    LOGGER.info(f"Running in display mode")
+            if pipeline.stream_type == StreamType.INFRA1:
+                appsink = pipeline.gst_pipeline.get_by_name("ir1_appsink")
+                if appsink:
+                    LOGGER.info(f"Connecting ir1_appsink callback for {pipeline.stream_type.value}")
+                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                else:
+                    LOGGER.info(f"Running in display mode")
+            if pipeline.stream_type == StreamType.INFRA2:
+                appsink = pipeline.gst_pipeline.get_by_name("ir2_appsink")
+                if appsink:
+                    LOGGER.info(f"Connecting ir2_appsink callback for {pipeline.stream_type.value}")
+                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                else:
+                    LOGGER.info(f"Running in display mode")
       
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
@@ -898,7 +921,7 @@ class GStreamerInterface:
             if not hasattr(pipeline, 'frame_count'): pipeline.frame_count = 0
             pipeline.frame_count += 1
             if pipeline.frame_count % 30 == 0:
-                LOGGER.info(f"{pipeline.stream_type.value} frame {pipeline.frame_count}")
+                LOGGER.debug(f"{pipeline.stream_type.value} frame {pipeline.frame_count}")
         except Exception as e:
             LOGGER.error(f"Error processing IR frame: {e}")
             return Gst.FlowReturn.ERROR
