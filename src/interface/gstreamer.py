@@ -364,7 +364,7 @@ class GStreamerInterface:
             server_ip = self.config.network.server.ip
 
             pipeline_str = (
-                f"appsrc name=src format=time is-live=true caps=\"{color_caps_str}\" ! "
+                f"appsrc name=src format=time is-live=true! "
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
                 f"video/x-raw,format=I420 ! "
