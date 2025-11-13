@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RealSense D435i Streaming Receiver (Unified pyrealsense Mode)
+RealSense D435i Streaming Receiver
 Supports:
 - Color (H.264)
 - Depth (LZ4)
@@ -22,7 +22,7 @@ from utils.logger import LOGGER
 
 
 class StreamingReceiver:
-    """Manages receiving camera streams with support for unified SDK modes"""
+    """Manages receiving camera streams"""
     
     def __init__(self, config_path: str):
         self.config = StreamingConfigManager.from_yaml(config_path)
@@ -184,7 +184,7 @@ Examples:
     parser.add_argument(
         "--only-display", 
         action="store_true", 
-        help="Only display streams, do not process them in the app (disables appsink)"
+        help="Only display streams"
     )
     parser.add_argument(
         "--verbose",
