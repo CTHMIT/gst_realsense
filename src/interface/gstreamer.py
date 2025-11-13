@@ -134,78 +134,6 @@ class GStreamerInterface:
             LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
     
     
-    def build_stereo_sender_pipelines(self) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
-        """
-        Build sender pipelines for left/right infrared streams
-        (pyrealsense appsrc mode)
-        """
-        width = self.config.realsense_camera.width
-        height = self.config.realsense_camera.height
-        fps = self.config.realsense_camera.fps
-        
-        single_ir_width = width
-        
-        left_port = self._get_port(StreamType.INFRA1)
-        right_port = self._get_port(StreamType.INFRA2)
-        pt_l = self._get_payload_type(StreamType.INFRA1)
-        pt_r = self._get_payload_type(StreamType.INFRA2)
-        protocol = self.config.network.transport.protocol
-        server_ip = self.config.network.server.ip
-
-        left_sink = f"{protocol}sink host={server_ip} port={left_port}"
-        right_sink = f"{protocol}sink host={server_ip} port={right_port}"
-        
-        LOGGER.info(f"Building Stereo split sender: {width}x{height}@{fps}fps")
-        LOGGER.info(f"  Single IR: {single_ir_width}x{height}")
-        LOGGER.info(f"  Left IR stream → port {left_port}, pt {pt_l}")
-        LOGGER.info(f"  Right IR stream → port {right_port}, pt {pt_r}")
-
-        ir_caps_str = (
-            f"video/x-raw,format=GRAY8,width={single_ir_width},height={height},framerate={fps}/1"
-        )
-        cpu_nv12_caps_str = (
-            f"video/x-raw,format=NV12,"
-            f"width={single_ir_width},height={height},framerate={fps}/1"
-        )
-        nvmm_caps_str = (
-            f"video/x-raw(memory:NVMM),format=NV12,"
-            f"width={single_ir_width},height={height},framerate={fps}/1"
-        )
-
-        left_config = self._get_stream_config(StreamType.INFRA1)
-        right_config = self._get_stream_config(StreamType.INFRA2)
-        encoder_left = self._build_encoder(StreamType.INFRA1, left_config)
-        encoder_right = self._build_encoder(StreamType.INFRA2, right_config)
-        
-        left_pipeline_str = (
-            f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-            f"queue max-size-buffers=2 ! videoconvert ! "
-            f"{cpu_nv12_caps_str} ! nvvidconv ! "
-            f"{nvmm_caps_str} ! {encoder_left} ! {left_sink}"        
-        )
-        right_pipeline_str = (
-            f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
-            f"queue max-size-buffers=2 ! videoconvert ! "
-            f"{cpu_nv12_caps_str} ! nvvidconv ! "
-            f"{nvmm_caps_str} ! {encoder_right} ! {right_sink}"       
-        )
-        
-        left_pipeline = GStreamerPipeline(
-            pipeline_str=left_pipeline_str,
-            stream_type=StreamType.INFRA1,
-            port=left_port, pt=pt_l
-        )
-        right_pipeline = GStreamerPipeline(
-            pipeline_str=right_pipeline_str,
-            stream_type=StreamType.INFRA2,
-            port=right_port, pt=pt_r
-        )
-        
-        left_pipeline.paired_pipeline = right_pipeline
-        right_pipeline.paired_pipeline = left_pipeline
-        
-        return left_pipeline, right_pipeline
-    
     def _pyrealsense_capture_loop(
         self, 
         stream_types: List[StreamType],
@@ -347,23 +275,18 @@ class GStreamerInterface:
 
         try:
             # 1. Build all GStreamer pipelines
-            has_ir = False
             for stream_type in final_stream_list:
-                if stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                    if not has_ir:
-                        # Build IR pipelines
-                        left_pipeline, right_pipeline = self.build_stereo_sender_pipelines()
-                        pipelines[StreamType.INFRA1] = left_pipeline
-                        pipelines[StreamType.INFRA2] = right_pipeline
-                        has_ir = True
-                elif stream_type == StreamType.COLOR:
-                    pipelines[StreamType.COLOR] = self.build_sender_pipeline(
-                        stream_type=StreamType.COLOR
-                    )
-                elif stream_type == StreamType.DEPTH:
-                    pipelines[StreamType.DEPTH] = self.build_sender_pipeline(
-                        stream_type=StreamType.DEPTH
-                    )
+                # The new build_sender_pipeline handles all types
+                if stream_type not in pipelines: 
+                    pipelines[stream_type] = self.build_sender_pipeline(stream_type)
+
+            # Manually link paired IR pipelines if they both exist
+            if StreamType.INFRA1 in pipelines and StreamType.INFRA2 in pipelines:
+                left = pipelines[StreamType.INFRA1]
+                right = pipelines[StreamType.INFRA2]
+                left.paired_pipeline = right
+                right.paired_pipeline = left
+                LOGGER.info("Paired INFRA1 and INFRA2 sender pipelines.")
 
             # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
@@ -372,11 +295,7 @@ class GStreamerInterface:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
                 else:
-                    # This catches INFRA2 (if INFRA1 was already handled)
-                    if stream_type == StreamType.INFRA2 and StreamType.INFRA1 in pipelines:
-                         pass # Already handled in the INFRA1 batch
-                    else:
-                        raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
+                    raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
             
             # 3. Start the pyrealsense capture thread
             LOGGER.info("Starting unified pyrealsense capture thread...")
@@ -403,6 +322,8 @@ class GStreamerInterface:
         """
         Build GStreamer sender pipeline for specified stream type
         (pyrealsense appsrc mode)
+        
+        Handles: COLOR, DEPTH, INFRA1, INFRA2
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
@@ -447,7 +368,7 @@ class GStreamerInterface:
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
                 f"video/x-raw,format=NV12 ! "
-                f"{encoder} ! " # encoder nvvidconv
+                f"{encoder} ! " # encoder already contains nvvidconv
                 f"{protocol}sink host={server_ip} port={port}"
             )
 
@@ -459,78 +380,47 @@ class GStreamerInterface:
                 stream_type=stream_type,
                 port=port, pt=pt
             )
+        
+        elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+            LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
+
+            ir_caps_str = (
+                f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+            )
+            cpu_nv12_caps_str = (
+                f"video/x-raw,format=NV12,"
+                f"width={width},height={height},framerate={fps}/1"
+            )
+            nvmm_caps_str = (
+                f"video/x-raw(memory:NVMM),format=NV12,"
+                f"width={width},height={height},framerate={fps}/1"
+            )
+
+            encoder = self._build_encoder(stream_type, stream_config)
+            protocol = self.config.network.transport.protocol
+            server_ip = self.config.network.server.ip
+            sink = f"{protocol}sink host={server_ip} port={port}"
+
+            pipeline_str = (
+                f"appsrc name=src format=time is-live=true caps=\"{ir_caps_str}\" ! "
+                f"queue max-size-buffers=2 ! videoconvert ! "
+                f"{cpu_nv12_caps_str} ! nvvidconv ! "
+                f"{nvmm_caps_str} ! {encoder} ! {sink}"        
+            )
+
+            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port}, pt {pt}")
+            LOGGER.debug(f"Pipeline: {pipeline_str}")
+
+            return GStreamerPipeline(
+                pipeline_str=pipeline_str,
+                stream_type=stream_type,
+                port=port, pt=pt
+            )
+
         else:
             raise ValueError(f"build_sender_pipeline called with unhandled type: {stream_type}")
     
     # ==================== Receiver Functions ====================
-    
-    def build_stereo_receiver_pipelines(
-        self
-    ) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
-        """
-        Build receiver pipelines for Stereo from left/right IR streams
-        """
-        width = self.config.realsense_camera.width
-        height = self.config.realsense_camera.height
-        single_ir_width = width # pyrealsense sends full width
-        
-        left_port = self._get_port(StreamType.INFRA1)
-        right_port = self._get_port(StreamType.INFRA2)
-        pt_l = self._get_payload_type(StreamType.INFRA1) 
-        pt_r = self._get_payload_type(StreamType.INFRA2) 
-
-        LOGGER.info(f"Building Stereo merge receiver")
-        LOGGER.info(f"  Left IR stream ← port {left_port}, pt {pt_l}")
-        LOGGER.info(f"  Right IR stream ← port {right_port}, pt {pt_r}")
-        
-        left_pipeline_str = self._build_ir_receiver_pipeline(
-            port=left_port, payload_type=pt_l, 
-            width=single_ir_width, height=height
-        )
-        right_pipeline_str = self._build_ir_receiver_pipeline(
-            port=right_port, payload_type=pt_r, 
-            width=single_ir_width, height=height
-        )
-        
-        left_pipeline = GStreamerPipeline(
-            pipeline_str=left_pipeline_str,
-            stream_type=StreamType.INFRA1,
-            port=left_port, pt=pt_l
-        )
-        right_pipeline = GStreamerPipeline(
-            pipeline_str=right_pipeline_str,
-            stream_type=StreamType.INFRA2,
-            port=right_port, pt=pt_r
-        )
-        
-        left_pipeline.paired_pipeline = right_pipeline
-        right_pipeline.paired_pipeline = left_pipeline
-        return left_pipeline, right_pipeline
-    
-    def _build_ir_receiver_pipeline(
-        self, port: int, payload_type: int, width: int, height: int
-    ) -> str:
-        """Build receiver pipeline for infrared stream"""
-        caps_str = (
-            f"application/x-rtp,media=video,clock-rate=90000,"
-            f"encoding-name=H264,payload={payload_type}"
-        )
-        decoder_element = self._get_decoder_element()
-        latency = self.config.streaming.jitter_buffer.latency
-        protocol = self.config.network.transport.protocol
-        receiver_ip = "0.0.0.0"
-
-        pipeline_str = (
-            f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
-            f"rtpjitterbuffer latency={latency} ! "
-            f"rtph264depay ! h264parse ! {decoder_element} ! videoconvert ! "
-            f"video/x-raw,format=GRAY8,width={width},height={height} ! "
-            f"tee name=t ! "
-            f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
-            f"t. ! queue ! autovideosink sync=false"
-        )
-        return pipeline_str
-    
     
     def build_receiver_pipeline(
         self,
@@ -538,6 +428,7 @@ class GStreamerInterface:
     ) -> GStreamerPipeline:
         """
         Build GStreamer receiver pipeline for specified stream type
+        Handles: COLOR, DEPTH, INFRA1, INFRA2
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
@@ -572,7 +463,6 @@ class GStreamerInterface:
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
             receiver_ip = "0.0.0.0"
-            pt = self._get_payload_type(stream_type)
             
             caps_str = (
                 f"application/x-rtp,media=video,clock-rate=90000,"
@@ -594,6 +484,10 @@ class GStreamerInterface:
                 port=port, pt=pt
             )
         elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+            LOGGER.info(f"Building {stream_type.value} H.264 receiver pipeline")
+            width = self.config.realsense_camera.width
+            height = self.config.realsense_camera.height
+            
             caps_str = (
                 f"application/x-rtp,media=video,clock-rate=90000,"
                 f"encoding-name=H264,payload={pt}"
@@ -601,7 +495,7 @@ class GStreamerInterface:
             decoder_element = self._get_decoder_element()
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
-            receiver_ip = self.config.network.server.ip
+            receiver_ip = "0.0.0.0" # Bind to all interfaces for receiving
 
             pipeline_str = (
                 f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
@@ -612,8 +506,16 @@ class GStreamerInterface:
                 f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
                 f"t. ! queue ! autovideosink sync=false"
             )
+            
+            LOGGER.debug(f"Pipeline: {pipeline_str}")
+            
+            return GStreamerPipeline(
+                pipeline_str=pipeline_str,
+                stream_type=stream_type,
+                port=port, pt=pt
+            )
         else:
-            raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}. Use build_stereo_receiver_pipelines() for INFRA1/2.")
+            raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}")
     
     # ==================== Helper Methods ====================
     
@@ -664,11 +566,15 @@ class GStreamerInterface:
 
                 if stream_type == StreamType.COLOR:
                     # appsrc (BGR) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
+                    # Note: build_sender_pipeline already does the BGR -> NV12 conversion
+                    # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
                     encoder_element = f"nvvidconv ! {nvmm_caps_str} {encoder_element_core}"
                     LOGGER.info(f"Using HW encoder for COLOR: nvv4l2h264enc")
 
                 elif stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                     # appsrc (GRAY8) -> videoconvert -> (NV12) -> nvvidconv -> (NVMM) -> nvv4l2h264enc
+                    # Note: build_sender_pipeline already does the GRAY8 -> NV12 conversion
+                    # The `nvvidconv` here is for NV12 (CPU) -> NV12 (NVMM)
                     encoder_element = f"nvvidconv ! {nvmm_caps_str} {encoder_element_core}"
                     LOGGER.info(f"Using HW encoder for GRAY8 stream ({stream_type.value}): nvv4l2h264enc")
                 else:
@@ -698,12 +604,20 @@ class GStreamerInterface:
     ) -> str:
         """Build core decoder element string (h264parse -> decoder)."""
         decoder_element = self._get_decoder_element()
-        return (f"h264parse ! {decoder_element}")
+        
+        # Fix: Add proper caps for NVIDIA hardware decoders
+        if decoder_element in ["nvh264dec", "nvcudah264dec"]:
+            return (
+                f"h264parse ! "
+                f"video/x-h264,stream-format=avc,alignment=au ! "
+                f"{decoder_element}"
+            )
+        else:
+            return f"h264parse ! {decoder_element}"
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
         return (
-            "identity name=monitor silent=false ! "  
             "autovideosink sync=false"
         )
     
