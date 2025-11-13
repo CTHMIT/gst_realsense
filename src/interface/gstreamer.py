@@ -618,9 +618,30 @@ class GStreamerInterface:
         stream_type: StreamType,
         stream_config: StreamConfig
     ) -> str:
-        """Build core decoder element string (h264parse -> decoder)."""
+        """
+        Build core decoder element string (h264parse -> decoder).
+        """
         decoder_element = self._get_decoder_element()
-        return f"h264parse ! {decoder_element}"
+        
+        if "nv" in decoder_element:
+            hw_converter = None
+            if Gst.ElementFactory.find("nvvideoconvert"):
+                hw_converter = "nvvideoconvert"
+            elif Gst.ElementFactory.find("nvcudaconvert"): 
+                hw_converter = "nvcudaconvert"
+
+            if hw_converter:
+                LOGGER.info(f"Using HW decoder path: {decoder_element} ! {hw_converter}")
+                return f"h264parse ! {decoder_element} ! {hw_converter}"
+            else:
+                LOGGER.warning(
+                    f"NVIDIA decoder '{decoder_element}' found, but no "
+                    f"'nvvideoconvert' or 'nvcudaconvert' found. "
+                    "Pipeline will likely fail!"
+                )
+                return f"h264parse ! {decoder_element}"
+        else:
+            return f"h264parse ! {decoder_element}"
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""

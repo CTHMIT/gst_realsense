@@ -64,15 +64,7 @@ class StreamingReceiver:
             
             for stream_type in stream_types:                
                 
-                if stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                    if not has_ir_started:                        
-                        success = self._start_stereo_receive()
-                        if success:
-                            started_count += 2  # infra1 + infra2
-                        has_ir_started = True
-                
-                elif stream_type in [StreamType.COLOR, StreamType.DEPTH]:
-                    # Color H.264 or Depth LZ4
+                if stream_type in [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2]:
                     success = self._start_single_stream(stream_type)
                     if success:
                         started_count += 1
