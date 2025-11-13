@@ -438,13 +438,16 @@ class GStreamerInterface:
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
+            
+            # *** FIX 1a: Use the sink helper ***
+            sink = self._build_sink(stream_type)
 
             pipeline_str = (
                 f"appsrc name=src format=time is-live=true ! "
                 f"queue max-size-buffers=2 ! "
                 f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
                 f"videoconvert ! "
-                f"autovideosink sync=false"
+                f"{sink}" # *** Use variable instead of hard-coded autovideosink
             )
 
             LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
@@ -459,7 +462,7 @@ class GStreamerInterface:
         elif stream_type == StreamType.COLOR:
             # Standard H.264 receiver
             decoder_core = self._build_decoder(stream_type, stream_config)
-            sink = self._build_sink(stream_type)
+            sink = self._build_sink(stream_type) # This was already correct
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
             receiver_ip = "0.0.0.0"
@@ -496,6 +499,9 @@ class GStreamerInterface:
             latency = self.config.streaming.jitter_buffer.latency
             protocol = self.config.network.transport.protocol
             receiver_ip = "0.0.0.0" # Bind to all interfaces for receiving
+            
+            # *** FIX 1b: Use the sink helper ***
+            sink = self._build_sink(stream_type)
 
             pipeline_str = (
                 f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
@@ -504,7 +510,7 @@ class GStreamerInterface:
                 f"video/x-raw,format=GRAY8,width={width},height={height} ! "
                 f"tee name=t ! "
                 f"queue ! appsink name=ir_appsink emit-signals=true drop=true max-buffers=1 sync=false "
-                f"t. ! queue ! autovideosink sync=false"
+                f"t. ! queue ! {sink}" # *** Use variable instead of hard-coded autovideosink
             )
             
             LOGGER.debug(f"Pipeline: {pipeline_str}")
@@ -604,22 +610,22 @@ class GStreamerInterface:
     ) -> str:
         """Build core decoder element string (h264parse -> decoder)."""
         decoder_element = self._get_decoder_element()
-        
-        # Fix: Add proper caps for NVIDIA hardware decoders
-        if decoder_element in ["nvh264dec", "nvcudah264dec"]:
-            return (
-                f"h264parse ! "
-                f"video/x-h264,stream-format=avc,alignment=au ! "
-                f"{decoder_element}"
-            )
-        else:
-            return f"h264parse ! {decoder_element}"
+        return f"h264parse ! {decoder_element}"
     
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
+        
+        # *** FIX 2: Force xvimagesink for stability ***
+        # autovideosink can be unreliable. xvimagesink is a common X11 sink.
+        # If this fails, try "glimagesink sync=false"
+        LOGGER.info("Using xvimagesink for display.")
         return (
-            "autovideosink sync=false"
+            "xvimagesink sync=false"
         )
+        # Original:
+        # return (
+        #     "autovideosink sync=false"
+        # )
     
     def _on_bus_message(self, bus, message, pipeline):
         """Handle GStreamer bus messages for debugging"""
@@ -733,10 +739,9 @@ class GStreamerInterface:
         
         if pipeline.stream_type == StreamType.DEPTH and scfg.encoding == "lz4":
             self._launch_lz4_receiver(pipeline)
-        elif pipeline.stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-            self._launch_y8i_merge_receiver(pipeline)
         else:
-            self._launch_standard_receiver(pipeline) # Color
+            # This now correctly handles COLOR, INFRA1, and INFRA2
+            self._launch_standard_receiver(pipeline) 
     
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth receiver"""
@@ -754,6 +759,11 @@ class GStreamerInterface:
             
             self._setup_lz4_receiver(pipeline, appsrc, reassembler)
             
+            # *** FIX 1c: Add bus monitoring to LZ4 receiver ***
+            bus = pipeline.gst_pipeline.get_bus()
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message, pipeline)
+            
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
@@ -767,32 +777,11 @@ class GStreamerInterface:
             self._cleanup_pipeline(pipeline)
             raise
     
-    def _launch_y8i_merge_receiver(self, pipeline: GStreamerPipeline):
-        """Launch Y8I merge receiver (left or right IR)"""
-        try:
-            pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            appsink = pipeline.gst_pipeline.get_by_name("ir_appsink")
-            if appsink:
-                appsink.connect("new-sample", self._on_ir_sample, pipeline)
-            
-            ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-            if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to set pipeline to PLAYING")
-            
-            state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
-            if state == Gst.State.PLAYING:
-                LOGGER.info(f"Started Y8I merge receiver {pipeline.stream_type.value}")
-            
-            pipeline.running = True
-            self.pipelines[pipeline.stream_type] = pipeline
-            
-        except Exception as e:
-            LOGGER.error(f"Launch Y8I merge receiver failed: {e}")
-            self._cleanup_pipeline(pipeline)
-            raise
-    
     def _launch_standard_receiver(self, pipeline: GStreamerPipeline):
-        """Launch standard H.264 receiver with enhanced debugging"""
+        """
+        Launch standard H.264 receiver with enhanced debugging.
+        Handles: COLOR, INFRA1, INFRA2
+        """
         try:
             LOGGER.info(f"Launching receiver for {pipeline.stream_type.value}")
             LOGGER.info(f"Pipeline: {pipeline.pipeline_str}")
@@ -802,7 +791,16 @@ class GStreamerInterface:
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
-            
+
+            if pipeline.stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
+                appsink = pipeline.gst_pipeline.get_by_name("ir_appsink")
+                if appsink:
+                    LOGGER.info(f"Connecting ir_appsink callback for {pipeline.stream_type.value}")
+                    appsink.connect("new-sample", self._on_ir_sample, pipeline)
+                else:
+                    LOGGER.warning(f"Could not find 'ir_appsink' for {pipeline.stream_type.value}. Frame processing callback disabled.")
+    
+
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
@@ -864,7 +862,7 @@ class GStreamerInterface:
             CHUNK_SIZE = 60 * 1024 
             total_chunks = (data_len + CHUNK_SIZE - 1) // CHUNK_SIZE
             HEADER_FORMAT = "!IHH" 
-            HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+            HEADER_SIZE = struct.calcsize(self.HEADER_FORMAT)
             data_to_send_size = CHUNK_SIZE - HEADER_SIZE
             
             for i in range(total_chunks):

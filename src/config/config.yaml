@@ -1,6 +1,5 @@
 network:
   client: 
-    ip: "10.28.134.61"
     type: "jetson_agx_orin"  
     nvenc_available: true
 
