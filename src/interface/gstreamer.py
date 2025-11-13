@@ -373,6 +373,7 @@ class GStreamerInterface:
             encoder_element, is_hw_encoder = self._build_encoder(stream_type, stream_config)
 
             conversion_pipeline_str = ""
+            
             if is_hw_encoder:
                 conversion_pipeline_str = (
                     f"videoconvert ! "
