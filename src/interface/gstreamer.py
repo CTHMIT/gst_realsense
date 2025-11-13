@@ -446,8 +446,8 @@ class GStreamerInterface:
     
     def build_receiver_pipeline(
         self,
+        stream_type: StreamType,
         receiver_ip: str = "0.0.0.0",
-        stream_type: StreamType
     ) -> GStreamerPipeline:
         """
         Build GStreamer receiver pipeline for specified stream type
