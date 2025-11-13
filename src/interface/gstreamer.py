@@ -10,7 +10,7 @@ Supports:
 """
 
 from typing import Literal, Optional, Callable, Dict, List, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 import threading
 import socket
@@ -133,6 +133,7 @@ class GStreamerInterface:
         if self.config.streaming.rtp.mtu > self.config.network.transport.mtu:
             LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
     
+    
     def build_stereo_sender_pipelines(self) -> Tuple[GStreamerPipeline, GStreamerPipeline]:
         """
         Build sender pipelines for left/right infrared streams
@@ -223,6 +224,7 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
 
         try:
+            # 1. Set up all requested streams and find their appsrcs
             if StreamType.COLOR in stream_types:
                 LOGGER.info(f"Configuring RealSense: Color at {width}x{height} @ {fps}fps (BGR8)")
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
@@ -263,6 +265,7 @@ class GStreamerInterface:
             
             LOGGER.info("Unified RealSense pipeline started. Streaming...")
 
+            # 3. Capture-Push Loop
             while self.running:
                 frames = self.rs_pipeline.wait_for_frames()
                 timestamp_ns = int(frames.get_timestamp() * 1_000_000)
@@ -339,18 +342,16 @@ class GStreamerInterface:
 
         pipelines = {}
         
-        active_streams = set(stream_types)
-        if StreamType.INFRA1 in active_streams and StreamType.INFRA2 in active_streams:
-            active_streams.add(StreamType.INFRA1)
-            active_streams.add(StreamType.INFRA2)
-        
-        final_stream_list = list(active_streams)
+        # This function now expects explicit INFRA1/INFRA2 from sender.py
+        final_stream_list = list(set(stream_types))
 
         try:
+            # 1. Build all GStreamer pipelines
             has_ir = False
             for stream_type in final_stream_list:
                 if stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                     if not has_ir:
+                        # Build IR pipelines
                         left_pipeline, right_pipeline = self.build_stereo_sender_pipelines()
                         pipelines[StreamType.INFRA1] = left_pipeline
                         pipelines[StreamType.INFRA2] = right_pipeline
@@ -364,17 +365,20 @@ class GStreamerInterface:
                         stream_type=StreamType.DEPTH
                     )
 
+            # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
             for stream_type in final_stream_list:
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
                 else:
+                    # This catches INFRA2 (if INFRA1 was already handled)
                     if stream_type == StreamType.INFRA2 and StreamType.INFRA1 in pipelines:
-                         pass 
+                         pass # Already handled in the INFRA1 batch
                     else:
                         raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
             
+            # 3. Start the pyrealsense capture thread
             LOGGER.info("Starting unified pyrealsense capture thread...")
             self.rs_thread = threading.Thread(
                 target=self._pyrealsense_capture_loop,
@@ -443,7 +447,7 @@ class GStreamerInterface:
                 f"queue max-size-buffers=2 ! "
                 f"videoconvert ! "
                 f"video/x-raw,format=NV12 ! "
-                f"{encoder} ! " # encoder 內部包含 nvvidconv
+                f"{encoder} ! " # encoder nvvidconv
                 f"{protocol}sink host={server_ip} port={port}"
             )
 
@@ -590,7 +594,7 @@ class GStreamerInterface:
                 port=port, pt=pt
             )
         else:
-            raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}")
+            raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}. Use build_stereo_receiver_pipelines() for INFRA1/2.")
     
     # ==================== Helper Methods ====================
     
@@ -885,6 +889,8 @@ class GStreamerInterface:
             self._cleanup_pipeline(pipeline)
             raise
     
+    # ==================== Callback Methods ====================
+    
     def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
         """Configure LZ4 sender appsink callback"""
         appsink = pipeline.gst_pipeline.get_by_name("sink")
@@ -896,7 +902,7 @@ class GStreamerInterface:
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """
-        Callback for new sample from appsink (LZ4 Sender)
+Moves `start_pyrealsense_streams` logic to build both pipelines if `INFRA1` or `INFRA2` is present, `launch_sender_pipeline` logic to handle H.264/LZ4, `launch_receiver_pipeline` logic, `build_receiver_pipeline` to raise error for IR, and adds `_start_stereo_receive` to `receiver.py`.        Callback for new sample from appsink (LZ4 Sender)
         """
         sample = appsink.pull_sample()
         if not sample:
@@ -946,7 +952,7 @@ class GStreamerInterface:
     def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """Configure LZ4 receiver socket listener thread"""
         if not appsrc:
-            raise RuntimeError("Could not find 'src' element in LZ4 receiver pipeline")
+            raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
         
         pipeline.udp_socket.bind(("", pipeline.port))
         pipeline.udp_socket.settimeout(1.0)
@@ -998,6 +1004,8 @@ class GStreamerInterface:
         finally:
             buffer.unmap(map_info)
         return Gst.FlowReturn.OK
+    
+    # ==================== Cleanup Methods ====================
     
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
