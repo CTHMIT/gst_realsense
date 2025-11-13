@@ -523,8 +523,8 @@ class GStreamerInterface:
         self.y8i_mode = split_mode
         
         # Y8I dimensions
-        y8i_width = self.config.realsense_camera.width  # e.g., 424 for 212x240 per IR
-        y8i_height = self.config.realsense_camera.height  # e.g., 240
+        y8i_width = self.config.realsense_camera.width  
+        y8i_height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
         if use_pyrealsense:
@@ -655,7 +655,7 @@ class GStreamerInterface:
             return
             
         # Get camera config
-        width = self.config.realsense_camera.width // 2
+        width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
         
