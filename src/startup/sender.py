@@ -115,7 +115,7 @@ class StreamingSender:
                     # Handle infrared
                     if y8i_mode == "split" and stream_type == StreamType.INFRA_LEFT:
                         # Start Y8I split (only once for left)
-                        success = self._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
+                        success = self.interface._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
                         if success:
                             started_count += 2  # left + right
                     elif y8i_mode == "single":
@@ -128,7 +128,7 @@ class StreamingSender:
                 
                 elif stream_type == StreamType.Y8I_STEREO:
                     # Y8I split mode
-                    success = self._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
+                    success = self.interface._start_y8i_split(y8i_split_mode, source_topics, auto_detect)
                     if success:
                         started_count += 2
                 
