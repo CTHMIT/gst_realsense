@@ -401,16 +401,25 @@ class GStreamerInterface:
             pipeline_str = "" 
             
             if stream_config.encoding == 'lz4':
-                LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc")
+                LOGGER.info(f"Building Z16 (GPU LZ4) pipeline for {stream_type.value} using nvCOMP")
                 
+                raw_caps = f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
+            
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
+                    f"appsrc name=src format=time is-live=true caps=\"{raw_caps}\" ! "
                     f"queue max-size-buffers=2 ! "
-                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
-                    f"appsink name=sink emit-signals=true sync=false"
+                    f"cudaupload ! "  # CPU -> GPU 
+                    f"nvcompvideoenc comp-method=lz4 ! " # <-- GPU compress
+                    f"rtpgstpay pt={pt} mtu={self.config.streaming.rtp.mtu} ! " # <-- chuck
+                    f"udpsink host={self.config.network.server.ip} port={port} sync=false"
                 )
-                LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
-                LOGGER.debug(f"Pipeline: {pipeline_str}")
+
+                return GStreamerPipeline(
+                    pipeline_str=pipeline_str,
+                    stream_type=stream_type,
+                    port=port, 
+                    pt=pt
+                )
 
             elif stream_config.encoding == 'rtp':
                 LOGGER.info(f"Building Z16 (RTPvRAW) pipeline for {stream_type.value} using pyrealsense + appsrc")
@@ -536,26 +545,29 @@ class GStreamerInterface:
             fps = self.config.realsense_camera.fps
 
             if stream_config.encoding == "lz4":
-                
-                sink = self._build_sink(stream_type)
+                LOGGER.info(f"Building Z16 (GPU LZ4) receiver pipeline for {stream_type.value} using nvCOMP")
 
+                rtp_caps = (
+                    f"application/x-rtp,media=application,clock-rate=90000,"
+                    f"encoding-name=X-GST,payload={pt}"
+                )
+                
+                sink_element = ""
                 if only_display:
-                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
-                    pipeline_str = (
-                        f"appsrc name=src format=time is-live=true ! "
-                        f"queue max-size-buffers=2 ! "
-                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                        f"videoconvert ! "
-                        f"{sink}"
-                    )
+                    sink_element = f"cudadownload ! videoconvert ! {self._build_sink(stream_type)}"
                 else:
-                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Appsink Only)")
-                    pipeline_str = (
-                        f"appsrc name=src format=time is-live=true ! "
-                        f"queue max-size-buffers=2 ! "
-                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                        f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                    sink_element = (
+                        "cudadownload ! " # GPU -> CPU 
+                        "appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
                     )
+
+                pipeline_str = (
+                    f"udpsrc address={receiver_ip} port={port} caps=\"{rtp_caps}\" ! "
+                    f"rtpjitterbuffer latency={self.config.streaming.jitter_buffer.latency} ! "
+                    f"rtpgstdepay ! " 
+                    f"nvcompvideodec ! " 
+                    f"{sink_element}"
+                )
 
                 LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
