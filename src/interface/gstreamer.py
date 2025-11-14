@@ -354,7 +354,7 @@ class GStreamerInterface:
                 
                 hack_caps_str = f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
 
-                payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.r_tp.mtu}"
+                payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
                 sink = (
                     f"{self.config.network.transport.protocol}sink host={self.config.network.server.ip} port={port} "
                     f"sync=false auto-multicast=false"
