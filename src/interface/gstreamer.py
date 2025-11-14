@@ -344,7 +344,16 @@ class GStreamerInterface:
 
                 LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
+
             if stream_config.encoding == 'rtp':
+                # "Hack"(16-bit -> 8-bit)
+                hack_width = width * 2 
+                
+                appsrc_caps_str = f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
+                
+                # caps，rtpvrawpay 
+                hack_caps_str = f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
+
                 payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
                 sink = (
                     f"{self.config.network.transport.protocol}sink host={self.config.network.server.ip} port={port} "
@@ -352,12 +361,15 @@ class GStreamerInterface:
                 )
 
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
+                    f"appsrc name=src format=time is-live=true caps=\"{appsrc_caps_str}\" ! "
                     f"queue max-size-buffers=2 ! "
-                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
+                    f"capsfilter caps=\"{hack_caps_str}\" ! "
                     f"{payloader} ! "
                     f"{sink}"
                 )
+
+                LOGGER.info(f"Built Z16 (RTPvRAW) sender pipeline for {stream_type.value} on port {port}")
+                LOGGER.debug(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
@@ -482,14 +494,18 @@ class GStreamerInterface:
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
 
             if stream_config.encoding == "rtp":
+                hack_width = width * 2
                 latency = self.config.streaming.jitter_buffer.latency
-
+                
                 caps_str = (
-                    "application/x-rtp,media=video,clock-rate=90000,"
-                    "encoding-name=RAW,sampling=GRAY16_LE," 
-                    f"width={width},height={height},payload={pt}"
+                    f"application/x-rtp,media=video,clock-rate=90000,"
+                    f"encoding-name=RAW,sampling=GRAY8," # GRAY8
+                    f"width={hack_width},height={height},payload={pt}" # hack_width
                 )
-
+                
+                # GRAY16_LE caps
+                revert_caps_str = f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
+                
                 sink_element = ""
                 if only_display:
                     sink_element = self._build_sink(stream_type)
@@ -499,11 +515,15 @@ class GStreamerInterface:
                 pipeline_str = (
                     f"{self.config.network.transport.protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
                     f"rtpjitterbuffer latency={latency} ! "
-                    f"rtpvrawdepay ! " # vraw
-                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                    f"videoconvert ! "
+                    f"rtpvrawdepay ! "
+                    # capsfilter 1280@GRAY8 to 640@GRAY16_LE
+                    f"capsfilter caps=\"{revert_caps_str}\" ! "
+                    f"videoconvert ! queue ! "
                     f"{sink_element}"
                 )
+
+                LOGGER.info(f"Built Z16 (RTPvRAW) receiver pipeline for {stream_type.value} on port {port}")
+                LOGGER.debug(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
