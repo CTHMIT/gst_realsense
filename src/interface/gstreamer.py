@@ -913,7 +913,7 @@ class GStreamerInterface:
             try:
                 raw_data = self.compression_queue.get(timeout=1.0)
                 
-                compressed_data = lz4.frame.compress(raw_data, fast_acceleration=4)
+                compressed_data = lz4.frame.compress(raw_data, compression_level=0)
                 frame_checksum = zlib.crc32(compressed_data)
 
                 self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF
