@@ -34,7 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     usbutils \
     v4l-utils \
     python3-dev \
-    # NEW: Install GStreamer Multimedia plugins (from setup_jetson.sh)
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
@@ -57,7 +56,6 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) main" \
     > /etc/apt/sources.list.d/ros2.list
 
-# RealSense repo setup (kept as original)
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     apt-transport-https \
@@ -66,12 +64,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ARG ISAAC_ROS_APT_REPO=https://isaac.download.nvidia.com/isaac-ros/release-3
-RUN curl -fsSL ${ISAAC_ROS_APT_REPO}/repos.key | gpg --dearmor -o /usr/share/keyrings/nvidia-isaac-ros.gpg && \
+
+RUN curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key | gpg --dearmor -o /usr/share/keyrings/nvidia-isaac-ros.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-isaac-ros.gpg] ${ISAAC_ROS_APT_REPO} $(lsb_release -cs) main" | \
     tee /etc/apt/sources.list.d/isaac-ros.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Isaac ROS Packages (Encoder)
+    # Isaac ROS Packages
     ros-${ROS_DISTRO}-isaac-ros-h264-encoder \
     ros-${ROS_DISTRO}-isaac-ros-common \
     \
@@ -90,7 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-realsense2-camera \
     ros-${ROS_DISTRO}-realsense2-description \
     \
-    # Image Transport (for potential compatibility/dependencies)
+    # Image Transport
     ros-${ROS_DISTRO}-cv-bridge \
     ros-${ROS_DISTRO}-image-transport \
     ros-${ROS_DISTRO}-image-transport-plugins \
