@@ -17,6 +17,7 @@ import lz4.frame
 import numpy as np
 import zlib
 import time
+import os
 import queue
 import struct
 import collections
@@ -185,8 +186,11 @@ class GStreamerInterface:
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
 
-        self.compression_queue: queue.Queue = queue.Queue(maxsize=2) # 緩衝 2 幀
+        self.compression_queue: queue.Queue = queue.Queue(maxsize=4) 
         self.compression_thread: Optional[threading.Thread] = None
+        self.decompression_queue = queue.Queue(maxsize=4)
+        self.decompression_workers: List[threading.Thread] = []
+        self._num_decomp_workers = max(1, os.cpu_count() // 2)
         self._lz4_frame_id = 0
 
         self._validate_config()
@@ -909,7 +913,7 @@ class GStreamerInterface:
             try:
                 raw_data = self.compression_queue.get(timeout=1.0)
                 
-                compressed_data = lz4.frame.compress(raw_data)
+                compressed_data = lz4.frame.compress(raw_data, fast_acceleration=8)
                 frame_checksum = zlib.crc32(compressed_data)
 
                 self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF
@@ -938,6 +942,27 @@ class GStreamerInterface:
                     LOGGER.error(f"LZ4 compression worker error: {e}", exc_info=True)
         
         LOGGER.info(f"LZ4 worker stopped for {host}:{port}")
+
+    def _lz4_decompression_worker(self, appsrc: GstApp.AppSrc):
+        """
+        Worker thread that pulls from decompression_queue, decompresses, 
+        and pushes to appsrc.
+        """
+        while self.running:
+            try:
+                frame_id, full_compressed_data = self.decompression_queue.get(timeout=1.0)
+                
+                decompressed_data = lz4.frame.decompress(full_compressed_data)
+                
+                gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
+                GLib.idle_add(appsrc.push_buffer, gst_buffer)
+            
+            except queue.Empty:
+                continue
+            except Exception as e:
+                if self.running:
+                    LOGGER.warning(f"LZ4 decompression worker error: {e}")
+        LOGGER.info("LZ4 decompression worker stopping.")
 
     def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth sender"""
@@ -1012,6 +1037,16 @@ class GStreamerInterface:
             reassembler = LZ4FrameReassembler()
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
+
+            LOGGER.info(f"Starting {self._num_decomp_workers} LZ4 decompression workers...")
+            for i in range(self._num_decomp_workers):
+                worker_thread = threading.Thread(
+                    target=self._lz4_decompression_worker,
+                    args=(appsrc,),
+                    daemon=True
+                )
+                worker_thread.start()
+                self.decompression_workers.append(worker_thread)
             
             self._setup_lz4_receiver(pipeline, appsrc, reassembler)
             
@@ -1070,22 +1105,28 @@ class GStreamerInterface:
 
     def _lz4_socket_listener(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
         """
-        Thread function to listen on UDP socket, reassemble chunks, 
-        and push full frames to appsrc (LZ4 Receiver)
+        Thread function to listen on UDP socket, reassemble chunks,
+        and push full *compressed* frames to the decompression queue.
         """
         while pipeline.running:
             try:
                 packet_data, _ = pipeline.udp_socket.recvfrom(65536)
+                
                 full_compressed_data = reassembler.add_chunk(packet_data)
                 
                 if full_compressed_data:
-                    decompressed_data = lz4.frame.decompress(full_compressed_data)
-                    gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
-                    GLib.idle_add(appsrc.push_buffer, gst_buffer)
+                    frame_id = reassembler.latest_full_frame_id
+                    try:
+                        self.decompression_queue.put_nowait(
+                            (frame_id, full_compressed_data)
+                        )
+                    except queue.Full:
+                        LOGGER.warning("Decompression queue is full. Dropping frame.")
+                    
             except socket.timeout:
                 continue 
             except Exception as e:
-                LOGGER.warning(f"LZ4 decompression/push error: {e}")
+                LOGGER.warning(f"LZ4 socket listener error: {e}")
         LOGGER.info(f"LZ4 socket listener for port {pipeline.port} stopping.")
     
     def _on_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
