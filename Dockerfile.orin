@@ -70,10 +70,6 @@ RUN curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key | gpg --dea
     tee /etc/apt/sources.list.d/isaac-ros.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Isaac ROS Packages
-    ros-${ROS_DISTRO}-isaac-ros-h264-encoder \
-    ros-${ROS_DISTRO}-isaac-ros-common \
-    \
     # Core ROS Packages
     python3-colcon-common-extensions \
     python3-rosdep \
