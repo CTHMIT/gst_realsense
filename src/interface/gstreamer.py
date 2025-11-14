@@ -332,6 +332,8 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
 
         if stream_type == StreamType.DEPTH:
+            pipeline_str = "" 
+            
             if stream_config.encoding == 'lz4':
                 LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc")
                 
@@ -341,17 +343,14 @@ class GStreamerInterface:
                     f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
                     f"appsink name=sink emit-signals=true sync=false"
                 )
-
                 LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
 
-            if stream_config.encoding == 'rtp':
-                # "Hack"(16-bit -> 8-bit)
+            elif stream_config.encoding == 'rtp':
+                LOGGER.info(f"Building Z16 (RTPvRAW) pipeline for {stream_type.value} using pyrealsense + appsrc")
+                
                 hack_width = width * 2 
                 
-                appsrc_caps_str = f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
-                
-                # caps，rtpvrawpay 
                 hack_caps_str = f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
 
                 payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
@@ -359,10 +358,10 @@ class GStreamerInterface:
                     f"{self.config.network.transport.protocol}sink host={self.config.network.server.ip} port={port} "
                     f"sync=false auto-multicast=false"
                 )
-
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true caps=\"{appsrc_caps_str}\" ! "
+                    f"appsrc name=src format=time is-live=true ! "
                     f"queue max-size-buffers=2 ! "
+                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
                     f"capsfilter caps=\"{hack_caps_str}\" ! "
                     f"{payloader} ! "
                     f"{sink}"
@@ -370,6 +369,9 @@ class GStreamerInterface:
 
                 LOGGER.info(f"Built Z16 (RTPvRAW) sender pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
+            
+            else:
+                raise ValueError(f"Unsupported encoding for depth stream: {stream_config.encoding}")
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
