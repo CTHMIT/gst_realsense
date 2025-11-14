@@ -332,17 +332,32 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
 
         if stream_type == StreamType.DEPTH:
-            LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc")
-            
-            pipeline_str = (
-                f"appsrc name=src format=time is-live=true ! "
-                f"queue max-size-buffers=2 ! "
-                f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
-                f"appsink name=sink emit-signals=true sync=false"
-            )
+            if stream_config.encoding == 'lz4':
+                LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc")
+                
+                pipeline_str = (
+                    f"appsrc name=src format=time is-live=true ! "
+                    f"queue max-size-buffers=2 ! "
+                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
+                    f"appsink name=sink emit-signals=true sync=false"
+                )
 
-            LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
+                LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
+                LOGGER.debug(f"Pipeline: {pipeline_str}")
+            if stream_config.encoding == 'rtp':
+                payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
+                sink = (
+                    f"{self.config.network.transport.protocol}sink host={self.config.network.server.ip} port={port} "
+                    f"sync=false auto-multicast=false"
+                )
+
+                pipeline_str = (
+                    f"appsrc name=src format=time is-live=true ! "
+                    f"queue max-size-buffers=2 ! "
+                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
+                    f"{payloader} ! "
+                    f"{sink}"
+                )
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,
@@ -373,7 +388,7 @@ class GStreamerInterface:
             encoder_element, is_hw_encoder = self._build_encoder(stream_type, stream_config)
 
             conversion_pipeline_str = ""
-            
+
             if is_hw_encoder:
                 conversion_pipeline_str = (
                     f"videoconvert ! "
@@ -436,33 +451,59 @@ class GStreamerInterface:
         port = self._get_port(stream_type)
         pt = self._get_payload_type(stream_type)
         
-        if stream_type == StreamType.DEPTH and stream_config.encoding == "lz4":
+        if stream_type == StreamType.DEPTH:
             width = self.config.realsense_camera.width
             height = self.config.realsense_camera.height
             fps = self.config.realsense_camera.fps
-            
-            sink = self._build_sink(stream_type)
 
-            if only_display:
-                LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
+            if stream_config.encoding == "lz4":
+                
+                sink = self._build_sink(stream_type)
+
+                if only_display:
+                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
+                    pipeline_str = (
+                        f"appsrc name=src format=time is-live=true ! "
+                        f"queue max-size-buffers=2 ! "
+                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                        f"videoconvert ! "
+                        f"{sink}"
+                    )
+                else:
+                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Appsink Only)")
+                    pipeline_str = (
+                        f"appsrc name=src format=time is-live=true ! "
+                        f"queue max-size-buffers=2 ! "
+                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                        f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                    )
+
+                LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
+                LOGGER.debug(f"Pipeline: {pipeline_str}")
+
+            if stream_config.encoding == "rtp":
+                latency = self.config.streaming.jitter_buffer.latency
+
+                caps_str = (
+                    "application/x-rtp,media=video,clock-rate=90000,"
+                    "encoding-name=RAW,sampling=GRAY16_LE," 
+                    f"width={width},height={height},payload={pt}"
+                )
+
+                sink_element = ""
+                if only_display:
+                    sink_element = self._build_sink(stream_type)
+                else:
+                    sink_element = "appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
-                    f"queue max-size-buffers=2 ! "
+                    f"{self.config.network.transport.protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
+                    f"rtpjitterbuffer latency={latency} ! "
+                    f"rtpvrawdepay ! " # vraw
                     f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
                     f"videoconvert ! "
-                    f"{sink}"
+                    f"{sink_element}"
                 )
-            else:
-                LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Appsink Only)")
-                pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
-                    f"queue max-size-buffers=2 ! "
-                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                    f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
-                )
-
-            LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
-            LOGGER.debug(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
                 pipeline_str=pipeline_str,

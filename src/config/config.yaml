@@ -48,7 +48,7 @@ realsense_camera:
 
       depth:
         camera_format: "Z16"   
-        encoding: "lz4"    
+        encoding: "rtp"   # lz4, rtp 
         port: 5020        
         gstreamer_format: "gray16-le" 
         ros_fomat: "16UC1" 
