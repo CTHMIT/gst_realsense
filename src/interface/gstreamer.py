@@ -190,7 +190,7 @@ class GStreamerInterface:
         self.compression_thread: Optional[threading.Thread] = None
         self.decompression_queue = queue.Queue(maxsize=16)
         self.decompression_workers: List[threading.Thread] = []
-        self._num_decomp_workers = max(1, os.cpu_count() // 2)
+        self._num_decomp_workers = max(1, os.cpu_count()-1)
         self._lz4_frame_id = 0
 
         self._validate_config()
@@ -1027,6 +1027,7 @@ class GStreamerInterface:
     def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth receiver"""
         try:
+            self.running = True
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
@@ -1071,6 +1072,7 @@ class GStreamerInterface:
             
         except Exception as e:
             LOGGER.error(f"Launch LZ4 receiver failed: {e}")
+            self.running = False
             self._cleanup_pipeline(pipeline)
             raise
 
