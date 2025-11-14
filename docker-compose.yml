@@ -2,7 +2,7 @@ version: '3.7'
 
 services:
   orin:
-    image: robot-vision-system:orin-${VERSION:-latest}
+    image: gst_realsense:orin-${VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.orin
@@ -59,7 +59,7 @@ services:
       start_period: ${HEALTHCHECK_START_PERIOD:-60}s
 
   server:
-    image: robot-vision-system:server-${VERSION:-latest}
+    image: gst_realsense:server-${VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.server

@@ -7,13 +7,14 @@ export ROS_DOMAIN_ID
 export SERVER_IP
 export ORIN_IP
 export VERSION
+export DOCKER_BUILDKIT=1
 
 PROJECT_NAME ?= gst_realsense
 
 SENDER_SCRIPT := src/startup/sender.py
 RECEIVER_SCRIPT := src/startup/receiver.py
 CONFIG_FILE := src/config/config.yaml
-DOCKER_COMPOSE := docker compose
+DOCKER_COMPOSE ?= docker compose
 
 .PHONY: build build-orin build-server
 build: build-orin build-server
