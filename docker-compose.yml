@@ -26,8 +26,6 @@ services:
       - ROS_DISTRO=${ROS_DISTRO:-humble}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
-      - DISPLAY=${DISPLAY}
-      - QT_X11_NO_MITSHM=1
       - SERVER_IP=${SERVER_IP:-10.28.121.28}
       - BUILD_TYPE=${BUILD_TYPE:-Release}
     volumes:
@@ -35,8 +33,6 @@ services:
       - ${CONFIG_PATH:-./config}:/workspace/config:rw
       - /dev:/dev:rw
       - /etc/udev/rules.d:/etc/udev/rules.d:ro
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/.Xauthority:/home/${USERNAME:-cthsu}/.Xauthority:ro
       - orin-data:/home/${USERNAME:-cthsu}/.ros:rw 
     command: >
       bash -lc "
