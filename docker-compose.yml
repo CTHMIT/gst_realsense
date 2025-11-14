@@ -1,0 +1,149 @@
+version: '3.7'
+
+services:
+  orin:
+    image: robot-vision-system:orin-${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.orin
+      target: runtime
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+        L4T_TAG: ${L4T_TAG:-r36.4.0}
+        USER_ID: ${USER_ID:-USER_ID}
+        GROUP_ID: ${GROUP_ID:-GROUP_ID}
+        USERNAME: ${USERNAME:-USERNAME}
+    platform: linux/arm64
+    container_name: orin
+    hostname: orin
+    privileged: true
+    runtime: nvidia
+    network_mode: host
+    profiles: [orin, client]
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-161}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI_ORIN:-file:///workspace/src/client/bringup/config/dds/cyclonedds_orin.xml}
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DISTRO=${ROS_DISTRO:-humble}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - ROBOT_NAMESPACE=${ROBOT_NAMESPACE:-}
+      - SERVER_IP=${SERVER_IP:-10.28.121.28}
+      - BUILD_TYPE=${BUILD_TYPE:-Release}
+    volumes:
+      - ${SRC_PATH:-./src}:/workspace/src:rw
+      - ${CONFIG_PATH:-./config}:/workspace/config:rw
+      - /dev:/dev:rw
+      - /etc/udev/rules.d:/etc/udev/rules.d:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - orin-data:/home/${USERNAME:-cthsu}/.ros:rw 
+    command: >
+      bash -lc "
+        source /opt/ros/${ROS_DISTRO:-humble}/setup.bash &&
+        if [ -f /workspace/install/setup.bash ]; then
+          source /workspace/install/setup.bash &&
+          ros2 launch client orin.launch.py 
+        else
+          echo 'Workspace not built. Run: docker compose run --rm orin bash' &&
+          tail -f /dev/null
+        fi
+      "
+    restart: ${RESTART_POLICY:-unless-stopped}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'command -v ros2 >/dev/null && ros2 node list >/dev/null'"]
+      interval: ${HEALTHCHECK_INTERVAL:-30}s
+      timeout: ${HEALTHCHECK_TIMEOUT:-10}s
+      retries: ${HEALTHCHECK_RETRIES:-3}
+      start_period: ${HEALTHCHECK_START_PERIOD:-60}s
+
+  server:
+    image: robot-vision-system:server-${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      target: runtime
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+        USER_ID: ${USER_ID:-USER_ID}
+        GROUP_ID: ${GROUP_ID:-GROUP_ID}
+        USERNAME: ${USERNAME:-USERNAME}
+    platform: linux/amd64
+    container_name: server
+    hostname: server
+    privileged: false
+    runtime: nvidia
+    network_mode: host
+    profiles: [server]
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-161}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI_SERVER:-file:///workspace/src/server/bringup/config/dds/cyclonedds_server.xml}
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DISTRO=${ROS_DISTRO:-humble}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_SOFTWARE=0
+      - ROBOT_NAMESPACE=${ROBOT_NAMESPACE:-}
+      - ORIN_IP=${ORIN_IP:-10.28.134.61}
+      - BUILD_TYPE=${BUILD_TYPE:-Release}
+    volumes:
+      - ${SRC_PATH:-./src}:/workspace/src:rw
+      - ${CONFIG_PATH:-./config}:/workspace/config:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/home/${USERNAME:-cthsu}/.Xauthority:ro
+      - server-data:/home/${USERNAME:-cthsu}/.ros:rw
+      - /dev/shm:/dev/shm:rw
+    command: >
+      bash -lc "
+        source /opt/ros/${ROS_DISTRO:-humble}/setup.bash &&
+        if [ -f /workspace/install/setup.bash ]; then
+          source /workspace/install/setup.bash &&
+          ros2 run gst_realsense ros_receiver.py 
+        else
+          echo 'Workspace not built. Run: docker compose run --rm server bash' &&
+          tail -f /dev/null
+        fi
+      "
+    restart: ${RESTART_POLICY:-unless-stopped}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'command -v ros2 >/dev/null && ros2 node list >/dev/null'"]
+      interval: ${HEALTHCHECK_INTERVAL:-30}s
+      timeout: ${HEALTHCHECK_TIMEOUT:-10}s
+      retries: ${HEALTHCHECK_RETRIES:-3}
+      start_period: ${HEALTHCHECK_START_PERIOD:-60}s
+    shm_size: ${SHM_SIZE:-16g}
+
+  rviz:
+    image: robot-vision-system:server-${VERSION:-latest}
+    container_name: rviz
+    hostname: rviz
+    network_mode: host
+    profiles: [viz, visualization]
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-161}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DISTRO=${ROS_DISTRO:-humble}
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+    volumes:
+      - ${SRC_PATH:-./src}:/workspace/src:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/home/${USERNAME:-cthsu}/.Xauthority:ro
+    command: >
+      bash -lc "
+        source /opt/ros/${ROS_DISTRO:-humble}/setup.bash &&
+        [ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash || true &&
+        ros2 launch server camera_visualization.launch.py
+      "
+
+volumes:
+  orin-data: {}
+  server-data: {}

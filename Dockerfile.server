@@ -1,0 +1,153 @@
+ARG ROS_DISTRO=humble
+FROM nvcr.io/nvidia/isaac/ros:x86_64-ros2_humble_f8edad8d48e9aa1b5b240c2374c55d60 AS base
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG ROS_DISTRO
+
+ARG USER_ID
+ARG GROUP_ID
+ARG USERNAME
+
+LABEL maintainer="${USERNAME}"
+LABEL description="ROS2 Vision System Server for x86_64 with CUDA support"
+
+# Install additional tools and packages
+RUN apt-get update --allow-releaseinfo-change && apt-get install -y --no-install-recommends \
+    # Network tools
+    net-tools \
+    chrony \
+    ethtool \
+    iftop \
+    htop \
+    \
+    # Additional ROS 2 packages
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-isaac-ros-h264-decoder \
+    ros-${ROS_DISTRO}-isaac-ros-visual-slam \
+    ros-${ROS_DISTRO}-nvblox-ros \
+    \
+    # GStreamer Plugins (Ensure standard plugins are available for software decoding fallback)
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    python3-gi \
+    python3-gi-cairo \
+    \
+    # Image transport and CV Bridge (Crucial for image conversion)
+    ros-${ROS_DISTRO}-cv-bridge \
+    ros-${ROS_DISTRO}-image-transport-plugins \
+    ros-${ROS_DISTRO}-compressed-image-transport \
+    ros-${ROS_DISTRO}-compressed-depth-image-transport \
+    \
+    # Robot description
+    ros-${ROS_DISTRO}-robot-state-publisher \
+    ros-${ROS_DISTRO}-joint-state-publisher \
+    ros-${ROS_DISTRO}-joint-state-publisher-gui \
+    ros-${ROS_DISTRO}-xacro \
+    ros-${ROS_DISTRO}-urdf \
+    \
+    # Robot control
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-controller-manager \
+    \
+    # Visualization
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-rviz-common \
+    ros-${ROS_DISTRO}-rviz-default-plugins \
+    ros-${ROS_DISTRO}-rqt \
+    ros-${ROS_DISTRO}-rqt-common-plugins \
+    ros-${ROS_DISTRO}-rqt-robot-monitor \
+    \
+    # Diagnostics
+    ros-${ROS_DISTRO}-diagnostic-aggregator \
+    ros-${ROS_DISTRO}-diagnostic-updater \
+    \
+    # TF and transforms
+    ros-${ROS_DISTRO}-tf2-tools \
+    \
+    # Navigation
+    ros-${ROS_DISTRO}-navigation2 \
+    ros-${ROS_DISTRO}-nav2-bringup \
+    \
+    # RealSense
+    ros-${ROS_DISTRO}-realsense2-camera \
+    ros-${ROS_DISTRO}-realsense2-description \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev \
+    libboost-all-dev \
+    libeigen3-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libatlas-base-dev \
+    libsuitesparse-dev \
+    libopencv-dev \
+    libpcl-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+    numpy==1.26.4 \
+    pydantic \
+    pydantic-settings \
+    pyyaml \
+    lz4 \
+    pyrealsense2 \
+    opencv-python \
+    scipy \
+    matplotlib \
+    transforms3d \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ROS_DISTRO=${ROS_DISTRO} \
+    RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+    ROS_LOCALHOST_ONLY=0 \
+    PYTHONUNBUFFERED=1
+
+RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /etc/bash.bashrc
+
+FROM base AS runtime
+ARG USER_ID
+ARG GROUP_ID
+ARG USERNAME
+
+RUN groupadd -g ${GROUP_ID} ${USERNAME} && \
+    useradd -m -s /bin/bash -u ${USER_ID} -g ${GROUP_ID} ${USERNAME} && \
+    groupadd -f render && \
+    usermod -aG sudo,video,render ${USERNAME} && \
+    mkdir -p /etc/sudoers.d && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} && \
+    chmod 0440 /etc/sudoers.d/${USERNAME}
+
+WORKDIR /workspace
+RUN mkdir -p /workspace/{src,build,install,log} && \
+    chown -R ${USERNAME}:${USERNAME} /workspace
+
+USER ${USERNAME}
+
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc && \
+    echo "alias cb='colcon build --symlink-install'" >> ~/.bashrc && \
+    echo "alias cba='colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release'" >> ~/.bashrc && \
+    echo "alias cbd='colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Debug'" >> ~/.bashrc && \
+    echo "alias ct='colcon test'" >> ~/.bashrc && \
+    echo "alias ctr='colcon test-result --verbose'" >> ~/.bashrc && \
+    echo "alias cs='source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias killros='killall -9 ros2 & killall -9 rviz2 & killall -9 rqt'" >> ~/.bashrc && \
+    echo "if [ -f /workspace/install/setup.bash ]; then source /workspace/install/setup.bash; fi" >> ~/.bashrc
+
+RUN mkdir -p ~/.rviz2
+
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    LIBGL_ALWAYS_SOFTWARE=0
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD bash -lc 'command -v ros2 >/dev/null && ros2 node list >/dev/null'
+
+CMD ["bash"]
