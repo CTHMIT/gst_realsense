@@ -38,7 +38,7 @@ class NetworkConfig(BaseModel):
 class StreamConfig(BaseModel):
     """Individual stream configuration"""
     camera_format: str = Field(..., description="RealSense stream format (e.g., RGB8, Z16, Y8)")
-    encoding: Literal["h264", "h265", "lz4"] = Field("h264", description="Video encoding codec")
+    encoding: Literal["h264", "h265", "lz4", "rtp"] = Field("h264", description="Video encoding codec")
     port: int = Field(..., description="UDP/TCP port for streaming", ge=1024, le=65535)
     gstreamer_format: str = Field(..., description="GStreamer video format")
     ros_fomat: str = Field(..., description="ROS2 image encoding format")
