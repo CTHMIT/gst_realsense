@@ -186,9 +186,9 @@ class GStreamerInterface:
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
 
-        self.compression_queue: queue.Queue = queue.Queue(maxsize=4) 
+        self.compression_queue: queue.Queue = queue.Queue(maxsize=16) 
         self.compression_thread: Optional[threading.Thread] = None
-        self.decompression_queue = queue.Queue(maxsize=4)
+        self.decompression_queue = queue.Queue(maxsize=16)
         self.decompression_workers: List[threading.Thread] = []
         self._num_decomp_workers = max(1, os.cpu_count() // 2)
         self._lz4_frame_id = 0
