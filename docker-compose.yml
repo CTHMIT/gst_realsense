@@ -21,7 +21,7 @@ services:
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-161}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
-      - CYCLONEDDS_URI=${CYCLONEDDS_URI_ORIN:-file:///workspace/src/client/bringup/config/dds/cyclonedds_orin.xml}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI_ORIN:-file:///workspace/src/config/dds/cyclonedds_orin.xml}
       - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
       - ROS_DISTRO=${ROS_DISTRO:-humble}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
@@ -36,6 +36,7 @@ services:
       - /dev:/dev:rw
       - /etc/udev/rules.d:/etc/udev/rules.d:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/home/${USERNAME:-cthsu}/.Xauthority:ro
       - orin-data:/home/${USERNAME:-cthsu}/.ros:rw 
     command: >
       bash -lc "
@@ -77,7 +78,7 @@ services:
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-161}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
-      - CYCLONEDDS_URI=${CYCLONEDDS_URI_SERVER:-file:///workspace/src/server/bringup/config/dds/cyclonedds_server.xml}
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI_SERVER:-file:///workspace/src/config/dds/cyclonedds_server.xml}
       - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
       - ROS_DISTRO=${ROS_DISTRO:-humble}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}

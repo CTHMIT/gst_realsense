@@ -4,13 +4,18 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image as RosImage
 from cv_bridge import CvBridge
-
+import sys
+from pathlib import Path
 from typing import Dict, List, Tuple
 import numpy as np
+
 import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('GstApp', '1.0') 
 from gi.repository import Gst, GLib, GstApp
+
+SRC_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SRC_ROOT))
 
 from interface.gstreamer import (
     GStreamerInterface,
