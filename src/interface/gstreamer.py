@@ -351,18 +351,16 @@ class GStreamerInterface:
                 
                 hack_width = width * 2 
                 
-                hack_caps_str = f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
-
                 payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
                 sink = (
                     f"{self.config.network.transport.protocol}sink host={self.config.network.server.ip} port={port} "
                     f"sync=false auto-multicast=false"
                 )
+
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
+                    f"appsrc name=src format=time is-live=true ! " 
                     f"queue max-size-buffers=2 ! "
-                    f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                    f"capsfilter caps=\"{hack_caps_str}\" ! "
+                    f"videoparse width={hack_width} height={height} format=gray8 framerate={fps}/1 ! "
                     f"{payloader} ! "
                     f"{sink}"
                 )
