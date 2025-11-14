@@ -8,15 +8,16 @@ Supports:
 - Infrared: Left/Right infrared streams via pyrealsense with NVENC
 """
 
-from typing import Literal, Optional, Callable, Dict, List, Tuple
+from typing import Literal, Optional, Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import threading
 import socket
 import lz4.frame
-import time  
 import numpy as np
-import os 
+import zlib
+import time
+import queue
 import struct
 import collections
 import pyrealsense2 as rs
@@ -60,54 +61,112 @@ class GStreamerPipeline:
     paired_pipeline: Optional['GStreamerPipeline'] = None # For linking IR1/IR2
 
 
+import time # 需要 time 模組
+
 class LZ4FrameReassembler:
-    """Handles reassembly of chunked LZ4 frames received over UDP."""
-    def __init__(self, max_buffer_size=10):
+    """Handles reassembly of chunked LZ4 frames received over UDP with CRC32 integrity check."""
+    def __init__(self, max_buffer_size=10, frame_timeout=1.0):
         self.buffer = collections.OrderedDict()
-        self.max_buffer_size = max_buffer_size
+        self.max_buffer_size = max_buffer_size  # 緩衝區中最大 *未完成* 影格數
+        self.frame_timeout = frame_timeout      # 未完成影格的存活秒數
         self.latest_full_frame_id = -1
-        self.HEADER_FORMAT = "!IHH" 
+        self.HEADER_FORMAT = "!IHHI"  # <--- NEW
         self.HEADER_SIZE = struct.calcsize(self.HEADER_FORMAT)
+        self.last_cleanup_time = time.time()
 
     def add_chunk(self, packet: bytes) -> Optional[bytes]:
         try:
+            if len(packet) < self.HEADER_SIZE:
+                LOGGER.warning("Received packet smaller than header size.")
+                return None
+
             header = packet[:self.HEADER_SIZE]
             data = packet[self.HEADER_SIZE:]
-            frame_id, chunk_index, total_chunks = struct.unpack(self.HEADER_FORMAT, header)
+            
+            frame_id, chunk_index, total_chunks, frame_checksum = struct.unpack(self.HEADER_FORMAT, header)
 
             if frame_id <= self.latest_full_frame_id:
                 return None
+            if total_chunks == 0:
+                LOGGER.warning("Received packet with total_chunks = 0.")
+                return None
+            if chunk_index >= total_chunks:
+                LOGGER.warning(f"Invalid chunk index {chunk_index}/{total_chunks} for frame {frame_id}.")
+                return None
+
             if frame_id not in self.buffer:
+                if (time.time() - self.last_cleanup_time > 1.0) or (len(self.buffer) >= self.max_buffer_size):
+                    self._cleanup_buffer()
+                
+                if len(self.buffer) >= self.max_buffer_size:
+                    LOGGER.warning(f"Buffer full ({self.max_buffer_size}). Dropping new frame {frame_id}.")
+                    self.buffer.popitem(last=False) 
+                    
                 self.buffer[frame_id] = {
                     'total_chunks': total_chunks,
+                    'frame_checksum': frame_checksum, 
                     'chunks_received': 0,
-                    'data_chunks': {}
+                    'data_chunks': {},
+                    'first_seen': time.time()
                 }
             
             frame = self.buffer[frame_id]
             
+            if frame['total_chunks'] != total_chunks or frame['frame_checksum'] != frame_checksum:
+                LOGGER.warning(f"Inconsistent packet header for frame {frame_id}. Dropping chunk.")
+                return None
+
             if chunk_index not in frame['data_chunks']:
                 frame['data_chunks'][chunk_index] = data
                 frame['chunks_received'] += 1
 
             if frame['chunks_received'] == frame['total_chunks']:
                 self.latest_full_frame_id = frame_id
-                full_compressed_data = b"".join([
-                    frame['data_chunks'][i] for i in range(frame['total_chunks'])
-                ])
-                del self.buffer[frame_id]
-                self._cleanup_buffer()
-                return full_compressed_data
+                
+                try:
+                    full_compressed_data = b"".join([
+                        frame['data_chunks'][i] for i in range(frame['total_chunks'])
+                    ])
+                except KeyError:
+                    LOGGER.warning(f"Frame {frame_id} missing chunks on reassembly (should not happen).")
+                    del self.buffer[frame_id]
+                    return None
+                
+                del self.buffer[frame_id] 
+
+                calculated_checksum = zlib.crc32(full_compressed_data)
+                
+                if calculated_checksum == frame['frame_checksum']:
+                    return full_compressed_data
+                else:
+                    LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! "
+                                   f"Expected {frame['frame_checksum']}, got {calculated_checksum}. Dropping corrupt frame.")
+                    return None
+
+        except struct.error as e:
+            LOGGER.warning(f"LZ4 Reassembler header unpack error: {e}")
         except Exception as e:
             LOGGER.warning(f"LZ4 Reassembler error: {e}")
+        
         return None
 
     def _cleanup_buffer(self):
-        """Remove old, incomplete frames from the buffer."""
-        old_keys = [k for k in self.buffer.keys() if k < self.latest_full_frame_id]
-        for k in old_keys:
-            del self.buffer[k]
-        while len(self.buffer) > self.max_buffer_size:
+        """Remove old, incomplete frames from the buffer based on timeout or ID."""
+        self.last_cleanup_time = time.time()
+        current_time = time.time()
+        
+        keys_to_delete = [
+            k for k, v in self.buffer.items()
+            if k < self.latest_full_frame_id or (current_time - v['first_seen']) > self.frame_timeout
+        ]
+        
+        for k in keys_to_delete:
+            if k in self.buffer:
+                LOGGER.debug(f"Cleaning up stale frame {k} from buffer.")
+                del self.buffer[k]
+        
+        while len(self.buffer) > self.max_buffer_size * 1.5: 
+            LOGGER.warning("Buffer overflow safety valve. Evicting oldest.")
             self.buffer.popitem(last=False)
 
 
@@ -118,11 +177,18 @@ class GStreamerInterface:
     """
     
     def __init__(self, config: StreamingConfigManager):
+
         self.config: StreamingConfigManager = config
         self.pipelines: Dict[StreamType, GStreamerPipeline] = {}
         self.running = False
+
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
+
+        self.compression_queue: queue.Queue = queue.Queue(maxsize=2) # 緩衝 2 幀
+        self.compression_thread: Optional[threading.Thread] = None
+        self._lz4_frame_id = 0
+
         self._validate_config()
     
     def _validate_config(self):
@@ -823,6 +889,56 @@ class GStreamerInterface:
     
     # ==================== Callback Methods ====================
 
+    def _lz4_compression_worker(self, udp_socket: socket.socket, host: str, port: int):
+        """
+        Worker thread to compress and send LZ4 frames.
+        """
+        LOGGER.info(f"LZ4 worker started for {host}:{port}")
+        
+        HEADER_FORMAT = "!IHHI" 
+        HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+        
+        MAX_PAYLOAD_SIZE = self.config.streaming.rtp.mtu - 28 # (IP+UDP)
+        data_to_send_size = MAX_PAYLOAD_SIZE - HEADER_SIZE
+
+        if data_to_send_size <= 0:
+            LOGGER.error(f"LZ4 worker: Invalid data_to_send_size ({data_to_send_size}). Stopping.")
+            return
+
+        while self.running: 
+            try:
+                raw_data = self.compression_queue.get(timeout=1.0)
+                
+                compressed_data = lz4.frame.compress(raw_data)
+                frame_checksum = zlib.crc32(compressed_data)
+
+                self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF
+                frame_id = self._lz4_frame_id
+                data_len = len(compressed_data)
+                
+                total_chunks = (data_len + data_to_send_size - 1) // data_to_send_size
+                if total_chunks > 65535:
+                    LOGGER.error(f"Frame {frame_id} requires {total_chunks} chunks. Dropping.")
+                    continue
+
+                for i in range(total_chunks):
+                    chunk_index = i
+                    header = struct.pack(HEADER_FORMAT, frame_id, chunk_index, total_chunks, frame_checksum)
+                    
+                    start = i * data_to_send_size
+                    end = min((i + 1) * data_to_send_size, data_len)
+                    data_chunk = compressed_data[start:end]
+                    
+                    udp_socket.sendto(header + data_chunk, (host, port))
+
+            except queue.Empty:
+                continue 
+            except Exception as e:
+                if self.running:
+                    LOGGER.error(f"LZ4 compression worker error: {e}", exc_info=True)
+        
+        LOGGER.info(f"LZ4 worker stopped for {host}:{port}")
+
     def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth sender"""
         try:
@@ -830,6 +946,15 @@ class GStreamerInterface:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
             
             self._setup_lz4_sender(pipeline) # Set up appsink callback
+
+            if not self.compression_thread:
+                LOGGER.info("Starting LZ4 compression worker thread...")
+                self.compression_thread = threading.Thread(
+                    target=self._lz4_compression_worker,
+                    args=(pipeline.udp_socket, self.config.network.server.ip, pipeline.port),
+                    daemon=True
+                )
+                self.compression_thread.start()
             
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
@@ -916,10 +1041,11 @@ class GStreamerInterface:
 
 
     def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
-        """Callback for new sample from appsink (LZ4 Sender)"""
+        """Callback for new sample from appsink (LZ4 Sender) - NON-BLOCKING"""
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.OK
+        
         buffer = sample.get_buffer()
         try:
             success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -927,39 +1053,18 @@ class GStreamerInterface:
                 LOGGER.warning("LZ4 Sender: Failed to map buffer")
                 return Gst.FlowReturn.OK
 
-            raw_data = map_info.data
-            compressed_data = lz4.frame.compress(raw_data)
+            data_copy = bytes(map_info.data)
             
-            if not hasattr(self, '_lz4_frame_id'):
-                self._lz4_frame_id = 0
-            
-            self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF
-            frame_id = self._lz4_frame_id
-            data_len = len(compressed_data)
-            CHUNK_SIZE = 60 * 1024 
-            total_chunks = (data_len + CHUNK_SIZE - 1) // CHUNK_SIZE
-            HEADER_FORMAT = "!IHH" 
-            HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-            data_to_send_size = CHUNK_SIZE - HEADER_SIZE
-            
-            for i in range(total_chunks):
-                chunk_index = i
-                header = struct.pack(HEADER_FORMAT, frame_id, chunk_index, total_chunks)
-                start = i * data_to_send_size
-                end = min((i + 1) * data_to_send_size, data_len)
-                data_chunk = compressed_data[start:end]
+            try:
+                self.compression_queue.put_nowait(data_copy)
+            except queue.Full:
+                LOGGER.warning("LZ4 compression queue is full. Dropping frame.")
                 
-                try:
-                    pipeline.udp_socket.sendto(
-                        header + data_chunk,
-                        (self.config.network.server.ip, pipeline.port)
-                    )
-                except Exception as e:
-                    LOGGER.warning(f"LZ4 chunk send error: {e}")
         except Exception as e:
-            LOGGER.warning(f"LZ4 compression/chunk error: {e}")
+            LOGGER.warning(f"LZ4 _on_sender_new_sample error: {e}")
         finally:
             buffer.unmap(map_info)
+            
         return Gst.FlowReturn.OK
     
 
