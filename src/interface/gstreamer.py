@@ -545,29 +545,26 @@ class GStreamerInterface:
             fps = self.config.realsense_camera.fps
 
             if stream_config.encoding == "lz4":
-                LOGGER.info(f"Building Z16 (GPU LZ4) receiver pipeline for {stream_type.value} using nvCOMP")
-
-                rtp_caps = (
-                    f"application/x-rtp,media=application,clock-rate=90000,"
-                    f"encoding-name=X-GST,payload={pt}"
-                )
                 
-                sink_element = ""
-                if only_display:
-                    sink_element = f"cudadownload ! videoconvert ! {self._build_sink(stream_type)}"
-                else:
-                    sink_element = (
-                        "cudadownload ! " # GPU -> CPU 
-                        "appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
-                    )
+                sink = self._build_sink(stream_type)
 
-                pipeline_str = (
-                    f"udpsrc address={receiver_ip} port={port} caps=\"{rtp_caps}\" ! "
-                    f"rtpjitterbuffer latency={self.config.streaming.jitter_buffer.latency} ! "
-                    f"rtpgstdepay ! " 
-                    f"nvcompvideodec ! " 
-                    f"{sink_element}"
-                )
+                if only_display:
+                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
+                    pipeline_str = (
+                        f"appsrc name=src format=time is-live=true ! "
+                        f"queue max-size-buffers=2 ! "
+                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                        f"videoconvert ! "
+                        f"{sink}"
+                    )
+                else:
+                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Appsink Only)")
+                    pipeline_str = (
+                        f"appsrc name=src format=time is-live=true ! "
+                        f"queue max-size-buffers=2 ! "
+                        f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
+                        f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                    )
 
                 LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
