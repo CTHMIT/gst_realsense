@@ -28,12 +28,20 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
       - SERVER_IP=${SERVER_IP:-10.28.121.28}
       - BUILD_TYPE=${BUILD_TYPE:-Release}
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
     volumes:
       - ${SRC_PATH:-./src}:/workspace/src:rw
       - ${CONFIG_PATH:-./config}:/workspace/config:rw
       - /dev:/dev:rw
       - /etc/udev/rules.d:/etc/udev/rules.d:ro
-      - orin-data:/home/${USERNAME:-cthsu}/.ros:rw 
+      - /dev/bus/usb:/dev/bus/usb
+      - /var/run/dbus:/var/run/dbus
+      - /var/run/nvargus-daemon:/var/run/nvargus-daemon
+      - /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra
+      - /dev/video*:/dev/video*
+      - /dev/dri:/dev/dri 
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
     command: >
       bash -lc "
         source /opt/ros/${ROS_DISTRO:-humble}/setup.bash &&
