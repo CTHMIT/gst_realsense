@@ -1,5 +1,3 @@
-version: '3.7'
-
 services:
   orin:
     image: gst_realsense:orin-${VERSION:-latest}
