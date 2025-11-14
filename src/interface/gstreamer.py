@@ -24,12 +24,7 @@ import collections
 import pyrealsense2 as rs
 import numpy as np
 import time 
-
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from sensor_msgs.msg import Image as RosImage
-from cv_bridge import CvBridge
+import msgpack
 
 import gi
 gi.require_version('Gst', '1.0')
@@ -174,126 +169,13 @@ class LZ4FrameReassembler:
             self.buffer.popitem(last=False)
 
 
-class GStreamerROSReceiver(Node):
-    """
-    ROS 2 Node that receives image streams from GStreamer
-    (Color, Depth, Infra1, Infra2) and publishes them as ROS 2 sensor_msgs/Image topics.
-    
-    Optimized with:
-    - Proper error handling
-    - Frame statistics
-    - Thread-safe operations
-    """
-
-    def __init__(self):
-        super().__init__('gstreamer_ros_receiver')
-        LOGGER.info("Initializing GStreamer ROS Receiver Node...")
-        LOGGER.info(f"ROS_DOMAIN_ID (env): {os.environ.get('ROS_DOMAIN_ID')}")
-        LOGGER.info(f"RMW_IMPLEMENTATION (env): {os.environ.get('RMW_IMPLEMENTATION')}")
-
-        self.bridge = CvBridge()
-        
-        self.frame_counts = {
-            StreamType.COLOR: 0,
-            StreamType.DEPTH: 0,
-            StreamType.INFRA1: 0,
-            StreamType.INFRA2: 0,
-        }
-        
-        self.last_log_time = time.time()
-        self.stats_interval = 5.0  
-
-        self.image_publishers: Dict[StreamType, rclpy.publisher.Publisher] = {
-            StreamType.COLOR: self.create_publisher(RosImage, '/camera/color/image_raw', 10),
-            StreamType.DEPTH: self.create_publisher(RosImage, '/camera/depth/image_raw', 10),
-            StreamType.INFRA1: self.create_publisher(RosImage, '/camera/infra1/image_raw', 10),
-            StreamType.INFRA2: self.create_publisher(RosImage, '/camera/infra2/image_raw', 10),
-        }
-        LOGGER.info("ROS 2 Publishers initialized successfully")
-        self._debug_timer = self.create_timer(10.0, self._log_ros2_topics)
-
-    def _log_ros2_topics(self):
-        """定期列出目前 node 所看到的 topic / node 名稱"""
-        try:
-            topics = self.get_topic_names_and_types()
-            nodes = self.get_node_names()
-
-            LOGGER.info(f"[ROS2 DEBUG] Topics visible from node:")
-            for name, types in topics:
-                LOGGER.info(f"  - {name}: {types}")
-
-            LOGGER.info(f"[ROS2 DEBUG] Nodes visible from node:")
-            for n in nodes:
-                LOGGER.info(f"  - {n}")
-
-        except Exception as e:
-            LOGGER.error(f"ROS2 debug introspection failed: {e}", exc_info=True)
-    
-    def publish_image(self, stream_type: StreamType, cv_image: np.ndarray, 
-                     encoding: str, timestamp_ns: Optional[int] = None):
-        """
-        Publish image to ROS2 topic with proper error handling
-        
-        Args:
-            stream_type: Type of stream (COLOR, DEPTH, INFRA1, INFRA2)
-            cv_image: OpenCV image array
-            encoding: ROS image encoding (bgr8, mono8, mono16)
-            timestamp_ns: Optional timestamp in nanoseconds from GStreamer
-        """
-        try:
-            ros_image_msg = self.bridge.cv2_to_imgmsg(cv_image, encoding=encoding)
-            
-            if timestamp_ns is not None and timestamp_ns != Gst.CLOCK_TIME_NONE:
-                ros_image_msg.header.stamp.sec = int(timestamp_ns // 1_000_000_000)
-                ros_image_msg.header.stamp.nanosec = int(timestamp_ns % 1_000_000_000)
-            else:
-                ros_image_msg.header.stamp = self.get_clock().now().to_msg()
-            
-            ros_image_msg.header.frame_id = "camera_link"
-            
-            self.image_publishers[stream_type].publish(ros_image_msg)
-            
-            self.frame_counts[stream_type] += 1
-            
-            current_time = time.time()
-            if current_time - self.last_log_time >= self.stats_interval:
-                LOGGER.info(
-                    f"Published frames - "
-                    f"Color: {self.frame_counts[StreamType.COLOR]}, "
-                    f"Depth: {self.frame_counts[StreamType.DEPTH]}, "
-                    f"IR1: {self.frame_counts[StreamType.INFRA1]}, "
-                    f"IR2: {self.frame_counts[StreamType.INFRA2]}"
-                )
-                self.last_log_time = current_time
-                
-        except Exception as e:
-            LOGGER.error(
-                f"Failed to publish {stream_type.value}: {e}",
-                throttle_duration_sec=1.0
-            )
-    
-    def get_statistics(self) -> Dict[str, int]:
-        """Return current frame statistics"""
-        return {
-            stream_type.value: count 
-            for stream_type, count in self.frame_counts.items()
-        }
-
 class GStreamerInterface:
-    """
-    Unified GStreamer interface for RealSense D435i streaming
-    (Unified pyrealsense SDK Mode)
-    """
-    
-    def __init__(self, config: StreamingConfigManager, enable_ros2: bool = True):
-
+    def __init__(self, config: StreamingConfigManager):
         self.config: StreamingConfigManager = config
         self.pipelines: Dict[StreamType, GStreamerPipeline] = {}
         self.running = False
-
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
-
         self.compression_queue: queue.Queue = queue.Queue(maxsize=8) 
         self.compression_thread: Optional[threading.Thread] = None
         self.decompression_queue = queue.Queue(maxsize=8)
@@ -301,74 +183,29 @@ class GStreamerInterface:
         self._num_decomp_workers = max(1, os.cpu_count()-1)
         self._lz4_frame_id = 0
         
-        self.enable_ros2 = enable_ros2
-        self.receiver_node: Optional[GStreamerROSReceiver] = None
-        self.ros2_executor: Optional[MultiThreadedExecutor] = None
-        self.ros2_thread: Optional[threading.Thread] = None
+        self.ipc_socket: Optional[socket.socket] = None
+        self.ipc_target: Tuple[str, int] = ("127.0.0.1", 12345)
         
-        if self.enable_ros2:
-            self._initialize_ros2()
-
         self._validate_config()
-    
-    def _initialize_ros2(self):
-        """Initialize ROS2 node and executor"""
+
+    def connect_ipc_socket(self) -> bool:
+        """Initialize and connect the TCP socket"""
         try:
-            if not rclpy.ok():
-                rclpy.init()
-                LOGGER.info("ROS2 initialized")
+            self.ipc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            LOGGER.info(f"IPC TCP Client connecting to {self.ipc_target}...")
             
-            self.receiver_node = GStreamerROSReceiver()
+            self.ipc_socket.connect(self.ipc_target)
             
-            self.ros2_executor = MultiThreadedExecutor()
-            self.ros2_executor.add_node(self.receiver_node)
-            
-            self.ros2_thread = threading.Thread(
-                target=self._ros2_spin,
-                daemon=True
-            )
-            self.ros2_thread.start()
-            
-            LOGGER.info("ROS2 node and executor initialized successfully")
-            
+            LOGGER.info("IPC TCP Client connected to ROS Server.")
+            return True
+        except ConnectionRefusedError:
+            LOGGER.error(f"Connection refused. Is the ROS Publisher process running?")
+            return False
         except Exception as e:
-            LOGGER.error(f"Failed to initialize ROS2: {e}", exc_info=True)
-            self.enable_ros2 = False
+            LOGGER.error(f"Failed to connect IPC socket: {e}", exc_info=True)
+            return False
     
-    def _ros2_spin(self):
-        """Spin ROS2 executor in separate thread"""
-        try:
-            LOGGER.info("ROS2 executor spinning...")
-            self.ros2_executor.spin()
-        except Exception as e:
-            if self.running:
-                LOGGER.error(f"ROS2 spin error: {e}", exc_info=True)
-        finally:
-            LOGGER.info("ROS2 executor stopped")
     
-    def _shutdown_ros2(self):
-        """Shutdown ROS2 resources"""
-        if not self.enable_ros2:
-            return
-            
-        try:
-            if self.ros2_executor:
-                self.ros2_executor.shutdown()
-                LOGGER.info("ROS2 executor shutdown")
-            
-            if self.ros2_thread and self.ros2_thread.is_alive():
-                self.ros2_thread.join(timeout=2.0)
-            
-            if self.receiver_node:
-                self.receiver_node.destroy_node()
-                LOGGER.info("ROS2 node destroyed")
-            
-            if rclpy.ok():
-                rclpy.shutdown()
-                LOGGER.info("ROS2 shutdown complete")
-                
-        except Exception as e:
-            LOGGER.error(f"Error shutting down ROS2: {e}", exc_info=True)
 
     def _validate_config(self):
         """Validate configuration for GStreamer compatibility"""
@@ -820,7 +657,6 @@ class GStreamerInterface:
                     pipeline_str = pipeline_prefix + sink
                 else:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver ")
-                    # IR 統一轉成 GRAY8，對應 _on_new_sample 的 mono8 分支
                     output_caps = "video/x-raw,format=GRAY8"
                     pipeline_str = (
                         pipeline_prefix +
@@ -1348,8 +1184,7 @@ class GStreamerInterface:
     def _on_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
         """
         Callback for new sample from appsink (Receiver)
-        Handles: COLOR, DEPTH, INFRA1, INFRA2
-        Converts GStreamer buffer to numpy array and publishes to ROS2
+        Converts GStreamer buffer to numpy and sends via local TCP socket
         """
         sample = appsink.pull_sample()
         if not sample:
@@ -1364,16 +1199,11 @@ class GStreamerInterface:
             return Gst.FlowReturn.ERROR
         
         try:
-            # Parse caps for format information
             s = caps.get_structure(0)
             width = s.get_value("width")
             height = s.get_value("height")
             format_name = s.get_value("format")
-            
-            # Get raw data
             data = np.frombuffer(map_info.data, dtype=np.uint8)
-            
-            # Process based on stream type and format
             cv_image_array = None
             cv_format = None
             expected_size = 0
@@ -1383,91 +1213,61 @@ class GStreamerInterface:
                     dtype = np.uint16
                     cv_format = "mono16"
                     expected_size = width * height * 2
-                    
                     if len(data) == expected_size:
                         cv_image_array = data.view(dtype).reshape(height, width)
                     else:
-                        LOGGER.warning(
-                            f"Depth buffer size mismatch! Got {len(data)}, expected {expected_size}. Dropping frame."
-                        )
                         return Gst.FlowReturn.OK
                 else:
-                    LOGGER.error(f"Unsupported Depth format: {format_name}")
                     return Gst.FlowReturn.ERROR
-
             elif pipeline.stream_type == StreamType.COLOR:
-                # Support both BGR and RGB formats
                 if format_name == 'BGR':
                     cv_format = "bgr8"
                     expected_size = width * height * 3
-                    
                     if len(data) == expected_size:
                         cv_image_array = data.reshape(height, width, 3)
                     else:
-                        LOGGER.warning(
-                            f"Color buffer size mismatch! Got {len(data)}, expected {expected_size}. Dropping frame."
-                        )
                         return Gst.FlowReturn.OK
-                        
                 elif format_name == 'RGB':
                     cv_format = "rgb8"
                     expected_size = width * height * 3
-                    
                     if len(data) == expected_size:
                         cv_image_array = data.reshape(height, width, 3)
                     else:
-                        LOGGER.warning(
-                            f"Color buffer size mismatch! Got {len(data)}, expected {expected_size}. Dropping frame."
-                        )
                         return Gst.FlowReturn.OK
-                        
-                elif format_name in ['NV12', 'I420', 'YV12']:
-                    # Handle YUV formats - convert to BGR
-                    LOGGER.warning(
-                        f"Color stream received YUV format ({format_name}). "
-                        f"This indicates videoconvert output caps are not being enforced. "
-                        f"Frame will be dropped. Check pipeline configuration."
-                    )
-                    return Gst.FlowReturn.OK
                 else:
-                    LOGGER.error(f"Unsupported Color format: {format_name}")
                     return Gst.FlowReturn.ERROR
-
             elif pipeline.stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
                 if format_name == 'GRAY8':
                     cv_format = "mono8"
                     expected_size = width * height
-                    
                     if len(data) == expected_size:
                         cv_image_array = data.reshape(height, width)
                     else:
-                        LOGGER.warning(
-                            f"Infra buffer size mismatch! Got {len(data)}, expected {expected_size}. Dropping frame."
-                        )
                         return Gst.FlowReturn.OK
-                        
-                elif format_name in ['NV12', 'I420', 'YV12']:
-                    # Handle YUV formats - extract Y plane only for grayscale
-                    LOGGER.warning(
-                        f"Infra stream received YUV format ({format_name}). "
-                        f"This indicates videoconvert output caps are not being enforced. "
-                        f"Frame will be dropped. Check pipeline configuration."
-                    )
-                    return Gst.FlowReturn.OK
                 else:
-                    LOGGER.error(f"Unsupported Infra format: {format_name}")
                     return Gst.FlowReturn.ERROR
             
-            # Publish to ROS2 if enabled and we have valid data
-            if self.enable_ros2 and self.receiver_node and cv_image_array is not None:
+            if self.ipc_socket and cv_image_array is not None:
                 pts_ns = buffer.pts
-                self.receiver_node.publish_image(
-                    pipeline.stream_type,
-                    cv_image_array,
-                    cv_format,
-                    pts_ns
-                )
+                
+                data_packet = msgpack.packb({
+                    "type": pipeline.stream_type.value,
+                    "shape": cv_image_array.shape,
+                    "dtype": str(cv_image_array.dtype),
+                    "encoding": cv_format,
+                    "timestamp_ns": pts_ns,
+                    "data": cv_image_array.tobytes()
+                })
+                
+                msg_len = struct.pack("!I", len(data_packet)) 
+                self.ipc_socket.sendall(msg_len + data_packet)
 
+        except BrokenPipeError:
+            LOGGER.error("ROS IPC Server disconnected! Stopping pipeline.")
+            GLib.idle_add(pipeline.gst_pipeline.set_state, Gst.State.NULL)
+            self.running = False 
+            return Gst.FlowReturn.ERROR
+            
         except Exception as e:
             LOGGER.error(
                 f"Error processing sample for {pipeline.stream_type.value}: {e}",
@@ -1526,7 +1326,11 @@ class GStreamerInterface:
         for stream_type in list(self.pipelines.keys()):
             self.stop_pipeline(stream_type)
 
-        self._shutdown_ros2()
+        if self.ipc_socket:
+            self.ipc_socket.close()
+            self.ipc_socket = None
+            LOGGER.info("IPC Socket closed")
+
         self.running = False
         LOGGER.info("All resources cleaned up")
     
@@ -1586,33 +1390,13 @@ class GStreamerInterface:
                 status[stream_type.value] = False
         return status
     
-    def get_ros2_statistics(self) -> Optional[Dict[str, int]]:
-        """Get ROS2 frame statistics if available"""
-        if self.enable_ros2 and self.receiver_node:
-            return self.receiver_node.get_statistics()
-        return None
-
-def create_sender_interface(config_path: str = "src/config/config.yaml", 
-                           enable_ros2: bool = False) -> GStreamerInterface:
-    """
-    Create sender interface (typically doesn't need ROS2)
     
-    Args:
-        config_path: Path to configuration file
-        enable_ros2: Enable ROS2 integration (default False for sender)
-    """
+
+def create_sender_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)
-    return GStreamerInterface(config, enable_ros2=enable_ros2)
+    return GStreamerInterface(config)
 
 
-def create_receiver_interface(config_path: str = "src/config/config.yaml",
-                             enable_ros2: bool = True) -> GStreamerInterface:
-    """
-    Create receiver interface with ROS2 integration
-    
-    Args:
-        config_path: Path to configuration file
-        enable_ros2: Enable ROS2 integration (default True for receiver)
-    """
+def create_receiver_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)
-    return GStreamerInterface(config, enable_ros2=enable_ros2)
+    return GStreamerInterface(config)

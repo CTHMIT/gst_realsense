@@ -9,10 +9,10 @@ dependencies = [
     "pydantic>=2.12.4",
     "pydantic-settings>=2.12.0",
     "pyyaml>=6.0.3",
-    "numpy>=1.24.0",
-    "opencv-python>=4.8.0",
+    "numpy<2.0",
     "lz4>=4.4.5",
     "pyrealsense2>=2.56.5.9235",
+    "msgpack>=1.1.2",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"
@@ -66,6 +66,3 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-
-[tool.pdm.venv]
-with_site_packages = true
