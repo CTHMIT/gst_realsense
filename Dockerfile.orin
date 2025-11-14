@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     usbutils \
     v4l-utils \
     python3-dev \
+    libgirepository1.0-dev \
+    libgstreamer1.0-0 \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
@@ -62,12 +64,6 @@ RUN apt-get update && apt-get install -y \
     && apt-key adv --keyserver keyserver.ubuntu.com --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE \
     && add-apt-repository "deb https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" \
     && rm -rf /var/lib/apt/lists/*
-
-ARG ISAAC_ROS_APT_REPO=https://isaac.download.nvidia.com/isaac-ros/release-3
-
-RUN curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key | gpg --dearmor -o /usr/share/keyrings/nvidia-isaac-ros.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/nvidia-isaac-ros.gpg] ${ISAAC_ROS_APT_REPO} $(lsb_release -cs) main" | \
-    tee /etc/apt/sources.list.d/isaac-ros.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core ROS Packages
