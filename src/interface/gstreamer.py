@@ -328,16 +328,10 @@ class GStreamerInterface:
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
                 appsrcs[StreamType.COLOR] = pipelines[StreamType.COLOR].gst_pipeline.get_by_name("src")
 
-            if StreamType.DEPTH in appsrcs:
-                    depth_frame = frames.get_depth_frame()
-                    if depth_frame:
-                        depth_data = np.asanyarray(depth_frame.get_data())
-                        depth_buffer = Gst.Buffer.new_wrapped(depth_data.tobytes())
-                        depth_buffer.pts = timestamp_ns
-                        depth_buffer.duration = Gst.CLOCK_TIME_NONE
-                        appsrcs[StreamType.DEPTH].push_buffer(depth_buffer)
-                    else:
-                        LOGGER.warning("Missing Depth frame, skipping")
+            if StreamType.DEPTH in stream_types:
+                LOGGER.info(f"Configuring RealSense: Depth at {width}x{height} @ {fps}fps (Z16)")
+                rs_config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
+                appsrcs[StreamType.DEPTH] = pipelines[StreamType.DEPTH].gst_pipeline.get_by_name("src")
 
             if StreamType.INFRA1 in stream_types:
                 LOGGER.info(f"Configuring RealSense: Infra1 at {width}x{height} @ {fps}fps (Y8)")
@@ -351,7 +345,7 @@ class GStreamerInterface:
 
             for stream_type in stream_types:
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
-                    LOGGER.error(f"Could not find '{stream_types}_appsink' in appsrc pipeline for {stream_type.value}! Thread stopping.")
+                    LOGGER.error(f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping.")
                     return
 
             LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
