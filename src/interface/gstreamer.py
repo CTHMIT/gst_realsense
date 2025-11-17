@@ -478,6 +478,8 @@ class GStreamerInterface:
 
             self.running = True
             for stream_type in final_stream_list:
+                if stream_type == StreamType.IMU:
+                    continue
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
