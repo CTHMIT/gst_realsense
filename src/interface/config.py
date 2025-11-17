@@ -52,7 +52,7 @@ class IMUConfig(BaseModel):
     """IMU configuration for D435i"""
     enabled: bool = Field(True, description="Enable IMU streaming")
     publish_rate: float = Field(200.0, description="IMU publish rate in Hz", ge=50.0, le=400.0)
-    udp_port: int = Field(5050, description="UDP port for IMU data", ge=1024, le=65535)    
+    port: int = Field(5050, description="UDP port for IMU data", ge=1024, le=65535)    
     accel_hz: int = Field(200, description="Acceleration publish rate in Hz", ge=50, le=400)
     gyro_hz: int = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
 

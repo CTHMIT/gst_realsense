@@ -183,12 +183,12 @@ class GStreamerInterface:
         
         self.ipc_socket: Optional[socket.socket] = None
         self.ipc_target: Tuple[str, int] = ("127.0.0.1", 12345)
-        self.imu_config = self.config.realsense_camera.camera.imu
+        self.imu_config = self.config.realsense_camera.imu
 
         self.imu_rcv_socket: Optional[socket.socket] = None
         self.imu_rcv_thread: Optional[threading.Thread] = None
         self.imu_socket: Optional[socket.socket] = None
-        self.imu_port: int = self.imu_config.udp_port
+        self.imu_port: int = self.imu_config.port
         
         self._validate_config()
 

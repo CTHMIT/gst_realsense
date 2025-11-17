@@ -27,7 +27,7 @@ realsense_camera:
     bitrate: 8000
 
   infra1:  
-    enabled: true+
+    enabled: true
     camera_format: "Y8"
     encoding: "h264"
     port: 5030
@@ -56,7 +56,7 @@ realsense_camera:
   imu:
     enabled: true
     publish_rate: 200.0
-    udp: 5050
+    port: 5050
     accel_hz: 250
     gyro_hz: 250
 
