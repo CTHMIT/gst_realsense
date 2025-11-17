@@ -369,7 +369,14 @@ class GStreamerInterface:
                 frames = self.rs_pipeline.wait_for_frames()
                 timestamp_ns = int(frames.get_timestamp() * 1_000_000)
 
-                # --- Push Color Frame ---
+                accel_frame = frames.first_or_default(rs.stream.accel)
+                gyro_frame = frames.first_or_default(rs.stream.gyro)
+                
+                if accel_frame:
+                    self.imu_callback(accel_frame)
+                if gyro_frame:
+                    self.imu_callback(gyro_frame)
+
                 if StreamType.COLOR in appsrcs:
                     color_frame = frames.get_color_frame()
                     if color_frame:
