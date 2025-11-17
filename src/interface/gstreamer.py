@@ -348,7 +348,7 @@ class GStreamerInterface:
                     LOGGER.error(f"Could not find '{stream_types}_appsink' in appsrc pipeline for {stream_type.value}! Thread stopping.")
                     return
 
-            LOGGER.info("Configuring RealSense: IMU (Accel & Gyro)")
+            LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
             rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz) 
 
             rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
