@@ -57,7 +57,7 @@ realsense_camera:
     enabled: true
     publish_rate: 200.0
     port: 5050
-    accel_hz: 250
+    accel_hz: 200
     gyro_hz: 200
 
 streaming:
