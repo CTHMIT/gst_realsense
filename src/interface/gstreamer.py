@@ -349,9 +349,9 @@ class GStreamerInterface:
                     return
 
             LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
-            rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f) 
+            rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz) 
 
-            rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f)
+            rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
 
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config, self.imu_callback)
