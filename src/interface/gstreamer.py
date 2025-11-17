@@ -22,8 +22,6 @@ import queue
 import struct
 import collections
 import pyrealsense2 as rs
-import numpy as np
-import time 
 import msgpack
 
 import gi
@@ -185,6 +183,12 @@ class GStreamerInterface:
         
         self.ipc_socket: Optional[socket.socket] = None
         self.ipc_target: Tuple[str, int] = ("127.0.0.1", 12345)
+        self.imu_config = self.config.realsense_camera.camera.imu
+
+        self.imu_rcv_socket: Optional[socket.socket] = None
+        self.imu_rcv_thread: Optional[threading.Thread] = None
+        self.imu_socket: Optional[socket.socket] = None
+        self.imu_port: int = self.imu_config.udp_port
         
         self._validate_config()
 
@@ -197,6 +201,16 @@ class GStreamerInterface:
             self.ipc_socket.connect(self.ipc_target)
             
             LOGGER.info("IPC TCP Client connected to ROS Server.")
+
+            if not self.imu_rcv_thread:
+                LOGGER.info("Starting IMU receiver thread...")
+                self.running = True 
+                self.imu_rcv_thread = threading.Thread(
+                    target=self._imu_socket_listener,
+                    daemon=True
+                )
+                self.imu_rcv_thread.start()
+
             return True
         except ConnectionRefusedError:
             LOGGER.error(f"Connection refused. Is the ROS Publisher process running?")
@@ -215,7 +229,82 @@ class GStreamerInterface:
         if self.config.streaming.rtp.mtu > self.config.network.transport.mtu:
             LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
     
-    
+    def _imu_socket_listener(self):
+        """
+        Thread function to listen on UDP socket for IMU packets
+        and forward them to the IPC TCP socket.
+        """
+        try:
+            self.imu_rcv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.imu_rcv_socket.bind(("", self.imu_port))
+            # self.imu_rcv_socket.settimeout(1.0) # blocking
+            self.imu_rcv_socket.setblocking(False) # non-blocking
+            LOGGER.info(f"IMU Receiver: Socket listener started on port {self.imu_port}")
+
+            while self.running:
+                latest_packet = None
+                try:
+                    while True:
+                        latest_packet, _ = self.imu_rcv_socket.recvfrom(1024)
+                        
+                except BlockingIOError: 
+                    pass 
+
+                if latest_packet and self.ipc_socket:
+                    try:
+                        msg_len = struct.pack("!I", len(latest_packet))
+                        self.ipc_socket.sendall(msg_len + latest_packet)
+                    
+                    except BrokenPipeError:
+                        LOGGER.error("ROS IPC Server disconnected! Stopping IMU listener.")
+                        self.running = False
+                    except Exception as e:
+                        if self.running:
+                            LOGGER.warning(f"IMU IPC forward error: {e}")
+                
+                time.sleep(0.001) 
+
+        except Exception as e:
+                if self.running:
+                    LOGGER.error(f"Failed to start IMU socket listener: {e}", exc_info=True)
+        finally:
+            if self.imu_rcv_socket:
+                self.imu_rcv_socket.close()
+                self.imu_rcv_socket = None
+            LOGGER.info(f"IMU socket listener for port {self.imu_port} stopping.")
+
+    def imu_callback(self, frame):
+            if not self.running or not self.imu_socket:
+                return
+            
+            try:
+                if frame.is_motion_frame():
+                    data = frame.as_motion_frame().get_motion_data()
+                    timestamp_ns = int(frame.get_timestamp() * 1_000_000)
+                    packet = None
+                    
+                    stream_type = frame.get_profile().stream_type()
+                    
+                    if stream_type == rs.stream.accel:
+                        packet = {
+                            "type": "imu_accel",
+                            "timestamp_ns": timestamp_ns,
+                            "data": (data.x, data.y, data.z)
+                        }
+                    elif stream_type == rs.stream.gyro:
+                        packet = {
+                            "type": "imu_gyro",
+                            "timestamp_ns": timestamp_ns,
+                            "data": (data.x, data.y, data.z)
+                        }
+                    
+                    if packet:
+                        packed_data = msgpack.packb(packet)
+                        self.imu_socket.sendto(packed_data, (self.config.network.server.ip, self.imu_port))
+            
+            except Exception as e:
+                LOGGER.warning(f"IMU callback error: {e}")
+
     def _pyrealsense_capture_loop(
         self, 
         stream_types: List[StreamType],
@@ -224,7 +313,7 @@ class GStreamerInterface:
         """
         Unified thread function to run pyrealsense2 and push frames 
         to all requested appsrc pipelines (Color, Depth, IR1, IR2).
-        """
+        """      
         
         appsrcs = {}
         rs_config = rs.config()
@@ -234,7 +323,6 @@ class GStreamerInterface:
         fps = self.config.realsense_camera.fps
 
         try:
-            # 1. Set up all requested streams and find their appsrcs
             if StreamType.COLOR in stream_types:
                 LOGGER.info(f"Configuring RealSense: Color at {width}x{height} @ {fps}fps (BGR8)")
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
@@ -255,23 +343,25 @@ class GStreamerInterface:
                 rs_config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, fps)
                 appsrcs[StreamType.INFRA2] = pipelines[StreamType.INFRA2].gst_pipeline.get_by_name("src")
 
-            # Check if all appsrcs were found
             for stream_type in stream_types:
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
                     LOGGER.error(f"Could not find '{stream_types}_appsink' in appsrc pipeline for {stream_type.value}! Thread stopping.")
                     return
 
-            # 2. Start RealSense
+            LOGGER.info("Configuring RealSense: IMU (Accel & Gyro)")
+            rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz) 
+
+            rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
+
             self.rs_pipeline = rs.pipeline()
-            profile = self.rs_pipeline.start(rs_config)
+            profile = self.rs_pipeline.start(rs_config, self.imu_callback)
             
-            # Set emitter enabled
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor:
                 if depth_sensor.supports(rs.option.emitter_enabled):
                     depth_sensor.set_option(rs.option.emitter_enabled, 1)
                 if depth_sensor.supports(rs.option.laser_power):
-                    depth_sensor.set_option(rs.option.laser_power, 150) # Set laser power
+                    depth_sensor.set_option(rs.option.laser_power, 150) 
             
             LOGGER.info("Unified RealSense pipeline started. Streaming...")
 
@@ -355,13 +445,18 @@ class GStreamerInterface:
         final_stream_list = list(set(stream_types))
 
         try:
-            # 1. Build all GStreamer pipelines
+            try:
+                self.imu_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                target_ip = self.config.network.server.ip
+                LOGGER.info(f"IMU UDP socket created, targeting {target_ip}:{self.imu_port}")
+            except Exception as e:
+                LOGGER.error(f"Failed to create IMU socket: {e}", exc_info=True)
+                return False
+
             for stream_type in final_stream_list:
-                # The new build_sender_pipeline handles all types
                 if stream_type not in pipelines: 
                     pipelines[stream_type] = self.build_sender_pipeline(stream_type)
 
-            # Manually link paired IR pipelines if they both exist
             if StreamType.INFRA1 in pipelines and StreamType.INFRA2 in pipelines:
                 left = pipelines[StreamType.INFRA1]
                 right = pipelines[StreamType.INFRA2]
@@ -369,7 +464,6 @@ class GStreamerInterface:
                 right.paired_pipeline = left
                 LOGGER.info("Paired INFRA1 and INFRA2 sender pipelines.")
 
-            # 2. Launch all GStreamer pipelines (they will wait for appsrc)
             self.running = True
             for stream_type in final_stream_list:
                 if stream_type in pipelines:
@@ -1325,6 +1419,17 @@ class GStreamerInterface:
         """Stop all running pipelines"""
         for stream_type in list(self.pipelines.keys()):
             self.stop_pipeline(stream_type)
+
+        if self.imu_rcv_thread:
+            LOGGER.info("Stopping IMU receiver thread...")
+            self.imu_rcv_thread.join(timeout=1)
+            self.imu_rcv_thread = None
+            LOGGER.info("IMU receiver thread stopped.")
+
+        if self.imu_socket:
+            self.imu_socket.close()
+            self.imu_socket = None
+            LOGGER.info("IMU Sender Socket closed")
 
         if self.ipc_socket:
             self.ipc_socket.close()

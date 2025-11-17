@@ -39,6 +39,7 @@ class NetworkConfig(BaseModel):
 
 class StreamConfig(BaseModel):
     """Individual stream configuration"""
+    enabled: bool = Field(True, description="Enable IMU streaming")
     camera_format: str = Field(..., description="RealSense stream format (e.g., RGB8, Z16, Y8)")
     encoding: Literal["h264", "h265", "lz4", "rtp"] = Field("h264", description="Video encoding codec")
     port: int = Field(..., description="UDP/TCP port for streaming", ge=1024, le=65535)
@@ -51,20 +52,16 @@ class IMUConfig(BaseModel):
     """IMU configuration for D435i"""
     enabled: bool = Field(True, description="Enable IMU streaming")
     publish_rate: float = Field(200.0, description="IMU publish rate in Hz", ge=50.0, le=400.0)
-    udp: int = Field(5050, description="UDP port for IMU data", ge=1024, le=65535)
+    udp_port: int = Field(5050, description="UDP port for IMU data", ge=1024, le=65535)    
+    accel_hz: int = Field(200, description="Acceleration publish rate in Hz", ge=50, le=400)
+    gyro_hz: int = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
 
-
-class D435iStreams(BaseModel):
-    """D435i camera streams configuration"""
+class CameraConfig(BaseModel):
+    """Camera complete configuration"""
     color: StreamConfig
     depth: StreamConfig
     infra1: StreamConfig  
     infra2: StreamConfig  
-    
-
-class D435iConfig(BaseModel):
-    """D435i camera complete configuration"""
-    streams: D435iStreams
     imu: IMUConfig
 
 
@@ -125,10 +122,7 @@ class RealSenseCameraConfig(BaseModel):
     """RealSense camera base configuration"""
     resolution: str = Field("640x480", description="Camera resolution", pattern=r"^\d+x\d+$")
     fps: int = Field(30, description="Frames per second", ge=6, le=90)
-    color: bool = Field(True, description="Enable color stream")
-    depth: bool = Field(True, description="Enable depth stream")
-    infra: bool = Field(True, description="Enable infrared streams")
-    d435i: D435iConfig
+    camera: CameraConfig
 
     @property
     def width(self) -> int:
