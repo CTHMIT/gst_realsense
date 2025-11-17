@@ -1460,6 +1460,8 @@ class GStreamerInterface:
     def _get_stream_config(self, stream_type: StreamType) -> StreamConfig:
         """Get stream config, mapping split types to base types"""
         type_map = {
+            StreamType.COLOR: "color",
+            StreamType.DEPTH: "depth",
             StreamType.INFRA1: "infra1",
             StreamType.INFRA2: "infra2"
         }
