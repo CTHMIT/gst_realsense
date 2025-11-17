@@ -463,6 +463,9 @@ class GStreamerInterface:
                 return False
 
             for stream_type in final_stream_list:
+                if stream_type == StreamType.IMU:
+                    continue
+
                 if stream_type not in pipelines: 
                     pipelines[stream_type] = self.build_sender_pipeline(stream_type)
 
@@ -1463,7 +1466,8 @@ class GStreamerInterface:
             StreamType.COLOR: "color",
             StreamType.DEPTH: "depth",
             StreamType.INFRA1: "infra1",
-            StreamType.INFRA2: "infra2"
+            StreamType.INFRA2: "infra2",
+            StreamType.IMU: "imu"
         }
         
         config_key = type_map.get(stream_type, stream_type.value)
