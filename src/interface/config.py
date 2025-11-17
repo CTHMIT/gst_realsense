@@ -173,7 +173,7 @@ class StreamingConfigManager(BaseSettings):
     
     def get_stream_port(self, stream_type: Literal["color", "depth", "infra1", "infra2"]) -> int:
         """Get port for specific stream type"""
-        streams = self.realsense_camera.d435i.streams
+        streams = self.realsense_camera
         
         if stream_type == "color":
             return streams.color.port
@@ -188,7 +188,7 @@ class StreamingConfigManager(BaseSettings):
     
     def get_stream_config(self, stream_type: Literal["color", "depth", "infra1", "infra2"]) -> StreamConfig:
         """Get stream configuration for specific type"""
-        streams = self.realsense_camera.d435i.streams
+        streams = self.realsense_camera
         
         if stream_type == "color":
             return streams.color
