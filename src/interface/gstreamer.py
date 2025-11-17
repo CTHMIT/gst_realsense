@@ -345,6 +345,8 @@ class GStreamerInterface:
                 appsrcs[StreamType.INFRA2] = pipelines[StreamType.INFRA2].gst_pipeline.get_by_name("src")
 
             for stream_type in stream_types:
+                if stream_type == StreamType.IMU:
+                    continue
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
                     LOGGER.error(f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping.")
                     return
