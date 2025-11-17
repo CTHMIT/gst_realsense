@@ -17,46 +17,41 @@ network:
 realsense_camera:
   resolution: "640x480"  
   fps: 30
-  color: true
-  depth: true
-  infra: true
+  color:
+    enabled: true
+    camera_format: "RGB8"  
+    encoding: "h264"
+    port: 5010
+    gstreamer_format: "YUY2"
+    ros_fomat: "rgb8"
+    bitrate: 8000
 
-  streams:
-    color:
-      enabled: true
-      camera_format: "RGB8"  
-      encoding: "h264"
-      port: 5010
-      gstreamer_format: "YUY2"
-      ros_fomat: "rgb8"
-      bitrate: 8000
+  infra1:  
+    enabled: true+
+    camera_format: "Y8"
+    encoding: "h264"
+    port: 5030
+    gstreamer_format: "GRAY8"
+    ros_fomat: "mono8"
+    bitrate: 8000
 
-    infra1:  
-      enabled: true+
-      camera_format: "Y8"
-      encoding: "h264"
-      port: 5030
-      gstreamer_format: "GRAY8"
-      ros_fomat: "mono8"
-      bitrate: 8000
+  infra2:  
+    enabled: true
+    camera_format: "Y8"
+    encoding: "h264"
+    port: 5040
+    gstreamer_format: "GRAY8"
+    ros_fomat: "mono8"
+    bitrate: 8000
 
-    infra2:  
-      enabled: true
-      camera_format: "Y8"
-      encoding: "h264"
-      port: 5040
-      gstreamer_format: "GRAY8"
-      ros_fomat: "mono8"
-      bitrate: 8000
-
-    depth:
-      enabled: true
-      camera_format: "Z16"   
-      encoding: "lz4"   # lz4, rtp 
-      port: 5020        
-      gstreamer_format: "gray16-le" 
-      ros_fomat: "16UC1" 
-      bitrate: 8000
+  depth:
+    enabled: true
+    camera_format: "Z16"   
+    encoding: "lz4"   # lz4, rtp 
+    port: 5020        
+    gstreamer_format: "gray16-le" 
+    ros_fomat: "16UC1" 
+    bitrate: 8000
 
   imu:
     enabled: true

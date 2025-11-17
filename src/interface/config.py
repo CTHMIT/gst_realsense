@@ -56,14 +56,6 @@ class IMUConfig(BaseModel):
     accel_hz: int = Field(200, description="Acceleration publish rate in Hz", ge=50, le=400)
     gyro_hz: int = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
 
-class CameraConfig(BaseModel):
-    """Camera complete configuration"""
-    color: StreamConfig
-    depth: StreamConfig
-    infra1: StreamConfig  
-    infra2: StreamConfig  
-    imu: IMUConfig
-
 
 # ==================== Streaming Configuration ====================
 
@@ -122,7 +114,12 @@ class RealSenseCameraConfig(BaseModel):
     """RealSense camera base configuration"""
     resolution: str = Field("640x480", description="Camera resolution", pattern=r"^\d+x\d+$")
     fps: int = Field(30, description="Frames per second", ge=6, le=90)
-    camera: CameraConfig
+    color: StreamConfig
+    depth: StreamConfig
+    infra1: StreamConfig  
+    infra2: StreamConfig  
+    imu: IMUConfig
+
 
     @property
     def width(self) -> int:
