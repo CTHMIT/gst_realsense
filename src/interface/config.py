@@ -52,7 +52,7 @@ class IMUConfig(BaseModel):
     """IMU configuration for D435i"""
     enabled: bool = Field(True, description="Enable IMU streaming")
     publish_rate: float = Field(200.0, description="IMU publish rate in Hz", ge=50.0, le=400.0)
-    port: int = Field(5050, description="UDP port for IMU data", ge=1024, le=65535)    
+    port: int = Field(..., description="UDP port for IMU data", ge=1024, le=65535)    
     accel_hz: int = Field(200, description="Acceleration publish rate in Hz", ge=50, le=400)
     gyro_hz: int = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
 
@@ -79,7 +79,6 @@ class RTPConfig(BaseModel):
         description="RTP payload type mappings"
     )
 
-
 class JitterBufferConfig(BaseModel):
     """Jitter buffer configuration for network stability"""
     latency: int = Field(100, description="Jitter buffer latency in ms", ge=0, le=2000)  
@@ -97,7 +96,6 @@ class ProcessingConfig(BaseModel):
     max_threads: int = Field(8, description="Maximum processing threads", ge=1, le=32)
     n_threads: int = Field(4, description="Number of active threads", ge=1, le=32)
 
-
 class StreamingConfig(BaseModel):
     """Complete streaming configuration"""
     startup_delay: int = Field(2, description="Startup delay in seconds", ge=0)
@@ -106,7 +104,6 @@ class StreamingConfig(BaseModel):
     jitter_buffer: JitterBufferConfig
     queue: QueueConfig
     processing: ProcessingConfig
-
 
 # ==================== RealSense Camera Configuration ====================
 
@@ -120,7 +117,6 @@ class RealSenseCameraConfig(BaseModel):
     infra2: StreamConfig  
     imu: IMUConfig
 
-
     @property
     def width(self) -> int:
         """Extract width from resolution string"""
@@ -130,7 +126,6 @@ class RealSenseCameraConfig(BaseModel):
     def height(self) -> int:
         """Extract height from resolution string"""
         return int(self.resolution.split('x')[1])
-
 
 # ==================== Main Configuration ====================
 
