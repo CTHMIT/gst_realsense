@@ -171,7 +171,7 @@ class StreamingConfigManager(BaseSettings):
         """Check if running as server (receiver)"""
         return self.network.server.type == "x86_64"
     
-    def get_stream_port(self, stream_type: Literal["color", "depth", "infra1", "infra2"]) -> int:
+    def get_stream_port(self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]) -> int:
         """Get port for specific stream type"""
         streams = self.realsense_camera
         
@@ -183,10 +183,12 @@ class StreamingConfigManager(BaseSettings):
             return streams.infra1.port
         elif stream_type == "infra2":
             return streams.infra2.port
+        elif stream_type == "imu":
+            return streams.imu.port
         else:
             raise ValueError(f"Unknown stream type: {stream_type}")
     
-    def get_stream_config(self, stream_type: Literal["color", "depth", "infra1", "infra2"]) -> StreamConfig:
+    def get_stream_config(self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]) -> StreamConfig:
         """Get stream configuration for specific type"""
         streams = self.realsense_camera
         
@@ -214,6 +216,8 @@ if __name__ == "__main__":
     LOGGER.info(f"Depth Port: {config.get_stream_port('depth')}")
     LOGGER.info(f"Infra1 Port: {config.get_stream_port('infra1')}")
     LOGGER.info(f"Infra2 Port: {config.get_stream_port('infra2')}")
+    LOGGER.info(f"IMU Port: {config.get_stream_port('imu')}")
+    LOGGER.info(f"Startup Delay: {config.streaming.startup_delay}")
     LOGGER.info(f"RTP Codec: {config.streaming.rtp.codec}")
     
     # Validate configuration

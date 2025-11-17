@@ -41,13 +41,14 @@ class StreamType(Enum):
     """Supported stream types for unified pyrealsense mode"""
     COLOR = "color"
     DEPTH = "depth"
-    INFRA1 = "infra1"  # Left IR
-    INFRA2 = "infra2"  # Right IR
+    INFRA1 = "infra1"
+    INFRA2 = "infra2"
+    IMU = "imu"
 
 
 @dataclass
 class GStreamerPipeline:
-    """GStreamer pipeline container (Unified Mode)"""
+    """GStreamer pipeline container"""
     pipeline_str: str
     stream_type: StreamType
     port: int
@@ -348,9 +349,11 @@ class GStreamerInterface:
                     LOGGER.error(f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping.")
                     return
 
-            LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
-            rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 63) 
-            rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, 250)
+            if StreamType.IMU in stream_types:
+                LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
+            
+                rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 63) 
+                rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, 250)
 
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config)

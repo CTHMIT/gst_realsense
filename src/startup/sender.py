@@ -164,11 +164,12 @@ Examples:
     )
     
     stream_group = parser.add_argument_group("Stream Selection")
-    stream_group.add_argument("--all", action="store_true", help="Enable all streams (Color, Depth, IR1, IR2)")
+    stream_group.add_argument("--all", action="store_true", help="Enable all streams (Color, Depth, IR1, IR2, IMU)")
     stream_group.add_argument("--color", action="store_true", help="Enable color stream")
     stream_group.add_argument("--depth", action="store_true", help="Enable depth stream")
     stream_group.add_argument("--infra1", action="store_true", help="Enable left infrared (IR1)")
     stream_group.add_argument("--infra2", action="store_true", help="Enable right infrared (IR2)")
+    stream_group.add_argument("--imu", action="store_true", help="Enable IMU (IMU)")
         
     parser.add_argument(
         "--verbose",
@@ -190,7 +191,7 @@ def main():
     # Determine streams
     stream_types = []
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2]
+        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2, StreamType.IMU]
     else:
         if args.color:
             stream_types.append(StreamType.COLOR)
@@ -200,6 +201,8 @@ def main():
             stream_types.append(StreamType.INFRA1)
         if args.infra2:
             stream_types.append(StreamType.INFRA2)
+        if args.imu:
+            stream_types.append(StreamType.IMU) 
     
     if not stream_types:
         LOGGER.error("No streams selected! Use --all or specify individual streams")
