@@ -36,8 +36,28 @@ g_main_loop = GLib.MainLoop()
 g_main_loop_thread = threading.Thread(target=g_main_loop.run, daemon=True)
 g_main_loop_thread.start()
 
+from multiprocessing import Pool, Queue as ProcessQueue
+import zlib
+
 from interface.config import StreamingConfigManager, StreamConfig
 from utils.logger import LOGGER
+
+def decompress_and_check(frame_id, compressed_data, expected_checksum):
+    """
+    Process-safe worker function (runs in a separate process).
+    Performs CRC32 check and LZ4 decompression.
+    """
+    calculated_checksum = zlib.crc32(compressed_data)
+    if calculated_checksum != expected_checksum:
+        LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! (Worker)")
+        return (frame_id, None, "CRC32 Mismatch") 
+    
+    try:
+        decompressed_data = lz4.frame.decompress(compressed_data)
+        return (frame_id, decompressed_data, "Success")
+    except Exception as e:
+        LOGGER.warning(f"Frame {frame_id} decompression error: {e}")
+        return (frame_id, None, f"Decompression Error: {e}")
 
 class StreamType(Enum):
     """Supported stream types for unified pyrealsense mode"""
@@ -171,9 +191,15 @@ class GStreamerInterface:
         self.rs_thread: Optional[threading.Thread] = None
         self.compression_queue: queue.Queue = queue.Queue(maxsize=8) 
         self.compression_thread: Optional[threading.Thread] = None
-        self.decompression_queue = queue.Queue(maxsize=8)
-        self.decompression_workers: List[threading.Thread] = []
-        self._num_decomp_workers = max(4, os.cpu_count() * 2)
+
+        self.decompression_queue = ProcessQueue(maxsize=16) 
+        self.gstreamer_push_queue = queue.Queue(maxsize=16)
+        self.gst_push_thread = None 
+
+        worker_count = max(4, os.cpu_count() - 2) 
+        LOGGER.info(f"Creating ProcessPool with {worker_count} workers for LZ4 decompression.")
+        self.process_pool = Pool(processes=worker_count)
+
         self._lz4_frame_id = 0
         
         self.ipc_socket: Optional[socket.socket] = None
@@ -984,33 +1010,59 @@ class GStreamerInterface:
         
         LOGGER.info(f"LZ4 worker stopped for {host}:{port}")
 
-    def _lz4_decompression_worker(self, appsrc: GstApp.AppSrc):
-        """
-        Worker thread that pulls from decompression_queue, decompresses, 
-        and pushes to appsrc.
-        """
+    def _process_pool_iter(self):
+        """Generator that yields tasks from the (Process) decompression_queue"""
+        LOGGER.info("ProcessPool task iterator started...")
         while self.running:
             try:
-                frame_id, full_compressed_data, frame_checksum = self.decompression_queue.get(timeout=1.0)
+                yield self.decompression_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            except (IOError, EOFError):
+                LOGGER.error("ProcessPool queue broke. Stopping iterator.")
+                break
+        LOGGER.info("ProcessPool task iterator stopped.")
 
-                calculated_checksum = zlib.crc32(full_compressed_data)
+    def _process_pool_callback(self, result: Tuple):
+        """
+        Callback executed in the MAIN process when a worker is done.
+        Puts the *decompressed* data into the thread-safe GStreamer push queue.
+        """
+        frame_id, decompressed_data, status = result
+        
+        if decompressed_data is not None:
+            try:
+                self.gstreamer_push_queue.put_nowait(decompressed_data)
+            except queue.Full:
+                LOGGER.warning(f"GStreamer push queue full. Dropping decompressed frame {frame_id}.")
+        else:
+            LOGGER.warning(f"Worker failed for frame {frame_id}: {status}")
 
-                if calculated_checksum != frame_checksum:
-                    LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! Dropping corrupt frame.")
-                    continue 
+    def _process_pool_error_callback(self, error):
+        """Callback executed in the MAIN process if a worker crashes."""
+        LOGGER.error(f"FATAL: A decompression worker crashed: {error}")
 
-                decompressed_data = lz4.frame.decompress(full_compressed_data)
-
+    def _gstreamer_push_worker(self, appsrc: GstApp.AppSrc):
+        """
+        [THREAD]
+        Pulls DECOMPRESSED data from the gstreamer_push_queue
+        and pushes it to the GStreamer appsrc in a thread-safe way.
+        """
+        LOGGER.info("GStreamer push worker (thread) started.")
+        while self.running:
+            try:
+                decompressed_data = self.gstreamer_push_queue.get(timeout=1.0)
+                
                 gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
                 GLib.idle_add(appsrc.push_buffer, gst_buffer)
-            
+                
             except queue.Empty:
                 continue
             except Exception as e:
                 if self.running:
-                    LOGGER.warning(f"LZ4 decompression worker error: {e}")
-        LOGGER.info("LZ4 decompression worker stopping.")
-
+                    LOGGER.warning(f"GStreamer push worker error: {e}")
+        LOGGER.info("GStreamer push worker (thread) stopping.")
+    
     def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
         """Launch LZ4 depth sender"""
         try:
@@ -1088,15 +1140,21 @@ class GStreamerInterface:
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
 
-            LOGGER.info(f"Starting {self._num_decomp_workers} LZ4 decompression workers...")
-            for i in range(self._num_decomp_workers):
-                worker_thread = threading.Thread(
-                    target=self._lz4_decompression_worker,
-                    args=(appsrc,),
-                    daemon=True
-                )
-                worker_thread.start()
-                self.decompression_workers.append(worker_thread)
+            self.gst_push_thread = threading.Thread(
+                target=self._gstreamer_push_worker,
+                args=(appsrc,),
+                daemon=True
+            )
+            self.gst_push_thread.start()
+
+            LOGGER.info("Starting ProcessPool workers...")
+            self.process_pool.starmap_async(
+                decompress_and_check,       
+                self._process_pool_iter(),  
+                chunksize=1,                
+                callback=self._process_pool_callback, 
+                error_callback=self._process_pool_error_callback 
+            )
             
             self._setup_lz4_receiver(pipeline, appsrc, reassembler)
             
@@ -1325,6 +1383,13 @@ class GStreamerInterface:
         """Stop all running pipelines"""
         for stream_type in list(self.pipelines.keys()):
             self.stop_pipeline(stream_type)
+
+        if self.process_pool:
+            LOGGER.info("Terminating process pool...")
+            self.process_pool.terminate()
+            self.process_pool.join()
+            self.process_pool = None
+            LOGGER.info("Process pool terminated.")
 
         if self.ipc_socket:
             self.ipc_socket.close()
