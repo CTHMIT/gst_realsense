@@ -40,7 +40,7 @@ class StreamingReceiver:
         only_display: bool = False
     ):
         LOGGER.info("=" * 60)
-        LOGGER.info("GStreamer Receiver Process (Process A)")
+        LOGGER.info("GStreamer Receiver Process")
         LOGGER.info("=" * 60)
         
         self.running = True 
