@@ -481,8 +481,6 @@ class GStreamerInterface:
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
-                else:
-                    raise RuntimeError(f"Failed to build pipeline for {stream_type.value}")
 
             LOGGER.info("Starting unified pyrealsense capture thread...")
             self.rs_thread = threading.Thread(
