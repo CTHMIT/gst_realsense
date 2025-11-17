@@ -133,14 +133,7 @@ class LZ4FrameReassembler:
                 
                 del self.buffer[frame_id] 
 
-                calculated_checksum = zlib.crc32(full_compressed_data)
-                
-                if calculated_checksum == frame['frame_checksum']:
-                    return full_compressed_data
-                else:
-                    LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! "
-                                   f"Expected {frame['frame_checksum']}, got {calculated_checksum}. Dropping corrupt frame.")
-                    return None
+                return full_compressed_data, frame['frame_checksum']
 
         except struct.error as e:
             LOGGER.warning(f"LZ4 Reassembler header unpack error: {e}")
@@ -180,7 +173,7 @@ class GStreamerInterface:
         self.compression_thread: Optional[threading.Thread] = None
         self.decompression_queue = queue.Queue(maxsize=8)
         self.decompression_workers: List[threading.Thread] = []
-        self._num_decomp_workers = max(1, os.cpu_count()-1)
+        self._num_decomp_workers = max(4, os.cpu_count() * 2)
         self._lz4_frame_id = 0
         
         self.ipc_socket: Optional[socket.socket] = None
@@ -998,10 +991,16 @@ class GStreamerInterface:
         """
         while self.running:
             try:
-                frame_id, full_compressed_data = self.decompression_queue.get(timeout=1.0)
-                
+                frame_id, full_compressed_data, frame_checksum = self.decompression_queue.get(timeout=1.0)
+
+                calculated_checksum = zlib.crc32(full_compressed_data)
+
+                if calculated_checksum != frame_checksum:
+                    LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! Dropping corrupt frame.")
+                    continue 
+
                 decompressed_data = lz4.frame.decompress(full_compressed_data)
-                
+
                 gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
                 GLib.idle_add(appsrc.push_buffer, gst_buffer)
             
@@ -1084,7 +1083,7 @@ class GStreamerInterface:
                 raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
             
             fps = self.config.realsense_camera.fps
-            reassembler = LZ4FrameReassembler(fps=fps, buffer_seconds=0.5)
+            reassembler = LZ4FrameReassembler(fps=fps, buffer_seconds=1.0)
 
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
@@ -1164,13 +1163,14 @@ class GStreamerInterface:
             try:
                 packet_data, _ = pipeline.udp_socket.recvfrom(65536)
                 
-                full_compressed_data = reassembler.add_chunk(packet_data)
-                
-                if full_compressed_data:
+                result = reassembler.add_chunk(packet_data)
+
+                if result is not None:
+                    full_compressed_data, frame_checksum = result
                     frame_id = reassembler.latest_full_frame_id
                     try:
                         self.decompression_queue.put_nowait(
-                            (frame_id, full_compressed_data)
+                            (frame_id, full_compressed_data, frame_checksum)
                         )
                     except queue.Full:
                         LOGGER.warning("Decompression queue is full. Dropping frame.")

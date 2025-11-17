@@ -16,6 +16,8 @@ class NetworkDevice(BaseModel):
     """Network device configuration"""
     ip: str = Field("0,0,0,0", description="IP address of the device")
     type: Literal["jetson_agx_orin", "x86_64"] = Field(..., description="Device type")
+    ipc_host: str = Field("127.0.0.1", description="IP address for IPC")
+    ipc_port: int = Field(12345, description="IPC port", ge=1024, le=65535)
     nvenc_available: Optional[bool] = Field(None, description="NVENC hardware encoding availability")
     cuda_available: Optional[bool] = Field(None, description="CUDA availability")
 
