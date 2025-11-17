@@ -15,8 +15,8 @@ network:
     mtu: 1500 
 
 realsense_camera:
-  resolution: "640x480"  
-  fps: 60
+  resolution: "424x240"  
+  fps: 30
   color:
     enabled: true
     camera_format: "RGB8"  
