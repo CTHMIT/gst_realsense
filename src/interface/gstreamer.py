@@ -1473,7 +1473,8 @@ class GStreamerInterface:
             StreamType.COLOR: self.config.get_stream_port("color"),
             StreamType.DEPTH: self.config.get_stream_port("depth"),
             StreamType.INFRA1: self.config.get_stream_port("infra1"),
-            StreamType.INFRA2: self.config.get_stream_port("infra2")
+            StreamType.INFRA2: self.config.get_stream_port("infra2"),
+            StreamType.IMU: self.config.get_stream_port("imu")
         }
         return base_ports.get(stream_type, 5000)
     
