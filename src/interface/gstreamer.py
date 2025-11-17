@@ -174,9 +174,9 @@ class GStreamerInterface:
         self.running = False
         self.rs_pipeline: Optional[rs.pipeline] = None
         self.rs_thread: Optional[threading.Thread] = None
-        self.compression_queue: queue.Queue = queue.Queue(maxsize=8) 
+        self.compression_queue: queue.Queue = queue.Queue(maxsize=16) 
         self.compression_thread: Optional[threading.Thread] = None
-        self.decompression_queue = queue.Queue(maxsize=8)
+        self.decompression_queue = queue.Queue(maxsize=16)
         self.decompression_workers: List[threading.Thread] = []
         self._num_decomp_workers = max(1, os.cpu_count()-1)
         self._lz4_frame_id = 0
@@ -942,11 +942,11 @@ class GStreamerInterface:
 
             if ret == Gst.StateChangeReturn.FAILURE:
                 if is_passive_stream:
-                    LOGGER.warning(f"Passive SENDER pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push.")
+                    LOGGER.warning(f"Passive sender pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push.")
                 else:
-                    LOGGER.debug(f"SENDER pipeline {pipeline.stream_type.value} waiting for appsrc data.")
+                    LOGGER.debug(f"sender pipeline {pipeline.stream_type.value} waiting for appsrc data.")
             
-            LOGGER.info(f"Initiated {pipeline.stream_type.value} SENDER pipeline.")
+            LOGGER.info(f"Initiated {pipeline.stream_type.value} sender pipeline.")
             
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
