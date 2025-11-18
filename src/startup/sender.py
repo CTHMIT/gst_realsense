@@ -212,7 +212,7 @@ def main():
             if not video_streams_present:
                 LOGGER.warning(
                     "IMU stream requested without a video stream. "
-                    "Automatically enabling INFRA1 as IMU cannot stream alone."
+                    "Automatically enabling DEPTH as IMU requires at least one video stream."
                 )
                 stream_types.append(StreamType.DEPTH)
 
