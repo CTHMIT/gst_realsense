@@ -179,7 +179,6 @@ Examples:
     
     return parser.parse_args()
 
-
 def main():
     """Main entry point"""
     args = parse_args()
@@ -188,21 +187,35 @@ def main():
         LOGGER.setLevel(logging.DEBUG)
     
 
-    # Determine streams
     stream_types = []
+    video_streams_present = False
+
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.INFRA1, StreamType.INFRA2, StreamType.IMU]
+        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.IMU]
+        video_streams_present = True 
     else:
         if args.color:
             stream_types.append(StreamType.COLOR)
+            video_streams_present = True 
         if args.depth:
             stream_types.append(StreamType.DEPTH)
+            video_streams_present = True 
         if args.infra1:
             stream_types.append(StreamType.INFRA1)
+            video_streams_present = True 
         if args.infra2:
             stream_types.append(StreamType.INFRA2)
+            video_streams_present = True 
+        
         if args.imu:
-            stream_types.append(StreamType.IMU) 
+            stream_types.append(StreamType.IMU)
+            if not video_streams_present:
+                LOGGER.warning(
+                    "IMU stream requested without a video stream. "
+                    "Automatically enabling INFRA1 as IMU cannot stream alone."
+                )
+                stream_types.append(StreamType.INFRA1)
+
     
     if not stream_types:
         LOGGER.error("No streams selected! Use --all or specify individual streams")
@@ -225,7 +238,6 @@ def main():
     except Exception as e:
         LOGGER.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
