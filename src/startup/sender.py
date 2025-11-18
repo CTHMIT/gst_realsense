@@ -214,7 +214,7 @@ def main():
                     "IMU stream requested without a video stream. "
                     "Automatically enabling INFRA1 as IMU cannot stream alone."
                 )
-                stream_types.append(StreamType.INFRA1)
+                stream_types.append(StreamType.DEPTH)
 
     
     if not stream_types:
