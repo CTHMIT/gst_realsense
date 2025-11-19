@@ -55,9 +55,8 @@ realsense_camera:
 
   imu:
     enabled: true
-    publish_rate: 200.0
     port: 5050
-    accel_hz: 63
+    accel_hz: 100
     gyro_hz: 200
 
 streaming:
@@ -71,14 +70,11 @@ streaming:
     codec: "nvv4l2h264enc" 
     tune: "zerolatency"
     speed: "ultrafast"
-    bitrate: 8000
     mtu: 1472 
     config_interval: 1
     payload_types:
       color: 96
       depth: 97
-      depth_high: 98
-      depth_low: 99
       infra1: 100
       infra2: 101
 

@@ -51,10 +51,9 @@ class StreamConfig(BaseModel):
 class IMUConfig(BaseModel):
     """IMU configuration for D435i"""
     enabled: bool = Field(True, description="Enable IMU streaming")
-    publish_rate: float = Field(200.0, description="IMU publish rate in Hz", ge=50.0, le=400.0)
     port: int = Field(..., description="UDP port for IMU data", ge=1024, le=65535)    
-    accel_hz: int = Field(200, description="Acceleration publish rate in Hz", ge=50, le=400)
-    gyro_hz: int = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
+    accel_hz: Literal[100, 200] = Field(100, description="Acceleration publish rate in Hz", ge=50, le=400)
+    gyro_hz: Literal[200, 400] = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
 
 
 # ==================== Streaming Configuration ====================
@@ -71,7 +70,6 @@ class RTPConfig(BaseModel):
     codec: Literal["x264enc", "nvh264enc", "x265enc", "nvv4l2h264enc"] = Field("nvv4l2h264enc", description="Video codec")
     tune: str = Field("zerolatency", description="Encoder tuning preset")
     speed: str = Field("ultrafast", description="Encoding speed preset")
-    bitrate: int = Field(8000, description="Encoding bitrate in kbps", ge=1000)
     mtu: int = Field(1400, description="RTP MTU size", ge=576, le=65535)  
     config_interval: int = Field(1, description="Config interval for keyframes", ge=-1)
     payload_types: dict[str, int] = Field(
