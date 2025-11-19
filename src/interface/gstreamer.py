@@ -109,7 +109,6 @@ class LZ4FrameReassembler:
                     self._cleanup_buffer()
 
                 if len(self.buffer) >= self.max_buffer_size:
-                    # Optimized cleanup: remove oldest 25% of buffer to avoid frequent cleanups
                     LOGGER.warning(
                         f"Buffer full ({self.max_buffer_size}). Batch cleaning old frames."
                     )
@@ -224,7 +223,6 @@ class GStreamerInterface:
 
             self.ipc_socket.connect(self.ipc_target)
 
-            # Optimize socket buffer for IPC
             self.ipc_socket.setsockopt(
                 socket.SOL_SOCKET, socket.SO_SNDBUF, self.config.streaming.udp.buffer_size
             )
