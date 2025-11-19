@@ -323,13 +323,15 @@ class GStreamerInterface:
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
 
+        pipeline_started = False
+
         try:
             if StreamType.COLOR in stream_types:
                 LOGGER.info(f"Configuring RealSense: Color at {width}x{height} @ {fps}fps (BGR8)")
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
                 appsrcs[StreamType.COLOR] = pipelines[StreamType.COLOR].gst_pipeline.get_by_name("src")
 
-            if StreamType.DEPTH in stream_types:
+            if StreamType.DEPTH in stream_types and self.config.realsense_camera.depth.encoding == "rtp":
                 LOGGER.info(f"Configuring RealSense: Depth at {width}x{height} @ {fps}fps (Z16)")
                 rs_config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
                 appsrcs[StreamType.DEPTH] = pipelines[StreamType.DEPTH].gst_pipeline.get_by_name("src")
@@ -359,6 +361,7 @@ class GStreamerInterface:
 
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config)
+            pipeline_started = True
             
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor:
@@ -374,8 +377,8 @@ class GStreamerInterface:
                 frames = self.rs_pipeline.wait_for_frames()
                 timestamp_ns = int(frames.get_timestamp() * 1_000_000)
 
-                accel_frame = frames.first_or_default(rs.stream.accel)
-                gyro_frame = frames.first_or_default(rs.stream.gyro)
+                # accel_frame = frames.first_or_default(rs.stream.accel)
+                # gyro_frame = frames.first_or_default(rs.stream.gyro)
                 
                 # if accel_frame:
                 #     self.imu_callback(accel_frame)
@@ -432,11 +435,17 @@ class GStreamerInterface:
         except Exception as e:
             if self.running:
                 LOGGER.error(f"Unified pyrealsense2 loop error: {e}", exc_info=True)
+                self.running = False
         finally:
-            if self.rs_pipeline:
-                self.rs_pipeline.stop()
-                self.rs_pipeline = None
-                LOGGER.info("Unified pyrealsense2 pipeline stopped.")
+            # 只有在 pipeline 真正啟動過的情況下，才呼叫 stop()
+            if self.rs_pipeline and pipeline_started:
+                try:
+                    self.rs_pipeline.stop()
+                except RuntimeError:
+                    pass 
+                
+            self.rs_pipeline = None
+            LOGGER.info("Unified pyrealsense2 pipeline cleanup done.")
 
     
     def start_pyrealsense_streams(
