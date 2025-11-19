@@ -3,33 +3,37 @@ RealSense D435i Camera Streaming Configuration
 Using Pydantic and Pydantic-Settings for type-safe configuration management
 """
 
-import yaml
-from typing import List, Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from utils.logger import LOGGER
 
 
 class NetworkDevice(BaseModel):
     """Network device configuration"""
+
     ip: str = Field("0,0,0,0", description="IP address of the device")
     type: Literal["jetson_agx_orin", "x86_64"] = Field(..., description="Device type")
     ipc_host: str = Field("127.0.0.1", description="IP address for IPC")
     ipc_port: int = Field(12345, description="IPC port", ge=1024, le=65535)
-    nvenc_available: Optional[bool] = Field(None, description="NVENC hardware encoding availability")
-    cuda_available: Optional[bool] = Field(None, description="CUDA availability")
+    nvenc_available: bool | None = Field(None, description="NVENC hardware encoding availability")
+    cuda_available: bool | None = Field(None, description="CUDA availability")
 
 
 class TransportConfig(BaseModel):
     """Network transport configuration"""
+
     protocol: Literal["udp", "tcp"] = Field("udp", description="Transport protocol")
     mtu: int = Field(1500, description="Maximum transmission unit", ge=576, le=9000)
 
 
 class NetworkConfig(BaseModel):
     """Complete network configuration for client-server setup"""
+
     client: NetworkDevice
     server: NetworkDevice
     transport: TransportConfig
@@ -37,11 +41,15 @@ class NetworkConfig(BaseModel):
 
 # ==================== Camera Stream Configuration ====================
 
+
 class StreamConfig(BaseModel):
     """Individual stream configuration"""
+
     enabled: bool = Field(True, description="Enable IMU streaming")
     camera_format: str = Field(..., description="RealSense stream format (e.g., RGB8, Z16, Y8)")
-    encoding: Literal["h264", "h265", "lz4", "rtp"] = Field("h264", description="Video encoding codec")
+    encoding: Literal["h264", "h265", "lz4", "rtp"] = Field(
+        "h264", description="Video encoding codec"
+    )
     port: int = Field(..., description="UDP/TCP port for streaming", ge=1024, le=65535)
     gstreamer_format: str = Field(..., description="GStreamer video format")
     ros_fomat: str = Field(..., description="ROS2 image encoding format")
@@ -50,16 +58,23 @@ class StreamConfig(BaseModel):
 
 class IMUConfig(BaseModel):
     """IMU configuration for D435i"""
+
     enabled: bool = Field(True, description="Enable IMU streaming")
-    port: int = Field(..., description="UDP port for IMU data", ge=1024, le=65535)    
-    accel_hz: Literal[100, 200] = Field(100, description="Acceleration publish rate in Hz", ge=50, le=400)
-    gyro_hz: Literal[200, 400] = Field(200, description="Gyroscope publish rate in Hz", ge=50, le=400)
+    port: int = Field(..., description="UDP port for IMU data", ge=1024, le=65535)
+    accel_hz: Literal[100, 200] = Field(
+        100, description="Acceleration publish rate in Hz", ge=50, le=400
+    )
+    gyro_hz: Literal[200, 400] = Field(
+        200, description="Gyroscope publish rate in Hz", ge=50, le=400
+    )
 
 
 # ==================== Streaming Configuration ====================
 
+
 class UDPConfig(BaseModel):
     """UDP streaming configuration"""
+
     sync: bool = Field(False, description="Enable sync mode")
     async_: bool = Field(False, alias="async", description="Enable async mode")
     buffer_size: int = Field(60000000, description="UDP buffer size in bytes", ge=1000000)
@@ -67,76 +82,113 @@ class UDPConfig(BaseModel):
 
 class RTPConfig(BaseModel):
     """RTP streaming configuration"""
-    codec: Literal["x264enc", "nvh264enc", "x265enc", "nvv4l2h264enc"] = Field("nvv4l2h264enc", description="Video codec")
+
+    codec: Literal["x264enc", "nvh264enc", "x265enc", "nvv4l2h264enc"] = Field(
+        "nvv4l2h264enc", description="Video codec"
+    )
     tune: str = Field("zerolatency", description="Encoder tuning preset")
     speed: str = Field("ultrafast", description="Encoding speed preset")
-    mtu: int = Field(1400, description="RTP MTU size", ge=576, le=65535)  
+    mtu: int = Field(1400, description="RTP MTU size", ge=576, le=65535)
     config_interval: int = Field(1, description="Config interval for keyframes", ge=-1)
     payload_types: dict[str, int] = Field(
         default_factory=lambda: {"depth": 96, "color": 98, "infra1": 97, "infra2": 99},
-        description="RTP payload type mappings"
+        description="RTP payload type mappings",
     )
+
 
 class JitterBufferConfig(BaseModel):
     """Jitter buffer configuration for network stability"""
-    latency: int = Field(100, description="Jitter buffer latency in ms", ge=0, le=2000)  
-    drop_on_latency: bool = Field(True, description="Drop packets on latency")  
+
+    latency: int = Field(100, description="Jitter buffer latency in ms", ge=0, le=2000)
+    drop_on_latency: bool = Field(True, description="Drop packets on latency")
 
 
 class QueueConfig(BaseModel):
     """GStreamer queue configuration"""
-    max_size_buffers: int = Field(10, description="Maximum queue buffer size", ge=0)  
-    leaky: Literal["downstream", "upstream", "no"] = Field("downstream", description="Queue leaky mode")
+
+    max_size_buffers: int = Field(10, description="Maximum queue buffer size", ge=0)
+    leaky: Literal["downstream", "upstream", "no"] = Field(
+        "downstream", description="Queue leaky mode"
+    )
 
 
 class ProcessingConfig(BaseModel):
     """Processing configuration"""
+
     max_threads: int = Field(8, description="Maximum processing threads", ge=1, le=32)
     n_threads: int = Field(4, description="Number of active threads", ge=1, le=32)
 
+
+class AppSinkConfig(BaseModel):
+    """AppSink configuration"""
+
+    max_buffers: int = Field(2, description="Max buffers for appsink", ge=1)
+    drop: bool = Field(True, description="Drop old buffers")
+    sync: bool = Field(False, description="Sync with clock")
+    emit_signals: bool = Field(True, description="Emit signals")
+
+
+class LZ4Config(BaseModel):
+    """LZ4 Reassembler configuration"""
+
+    cleanup_ratio: float = Field(0.25, description="Ratio of buffer to clean up", ge=0.1, le=0.9)
+    max_buffer_size_factor: float = Field(
+        1.0, description="Factor to multiply FPS by for buffer size", ge=0.5
+    )
+
+
 class StreamingConfig(BaseModel):
     """Complete streaming configuration"""
+
     startup_delay: int = Field(2, description="Startup delay in seconds", ge=0)
     udp: UDPConfig
     rtp: RTPConfig
     jitter_buffer: JitterBufferConfig
     queue: QueueConfig
+    appsink: AppSinkConfig
+    lz4: LZ4Config
     processing: ProcessingConfig
+
 
 # ==================== RealSense Camera Configuration ====================
 
+
 class RealSenseCameraConfig(BaseModel):
     """RealSense camera base configuration"""
+
     resolution: str = Field("640x480", description="Camera resolution", pattern=r"^\d+x\d+$")
     fps: int = Field(30, description="Frames per second", ge=6, le=90)
     color: StreamConfig
     depth: StreamConfig
-    infra1: StreamConfig  
-    infra2: StreamConfig  
+    infra1: StreamConfig
+    infra2: StreamConfig
     imu: IMUConfig
 
     @property
     def width(self) -> int:
         """Extract width from resolution string"""
-        return int(self.resolution.split('x')[0])
-    
+        return int(self.resolution.split("x")[0])
+
     @property
     def height(self) -> int:
         """Extract height from resolution string"""
-        return int(self.resolution.split('x')[1])
+        return int(self.resolution.split("x")[1])
+
 
 # ==================== Main Configuration ====================
+
 
 class StreamingConfigManager(BaseSettings):
     """
     Main configuration class for D435i streaming system
     Automatically loads from config.yaml file
     """
+
     model_config = SettingsConfigDict(
-        yaml_file='src/config/config.yaml',
-        yaml_file_encoding='utf-8',
-        env_nested_delimiter='__',
-        extra='ignore'
+        yaml_file="src/config/config.yaml",
+        yaml_file_encoding="utf-8",
+        env_nested_delimiter="__",
+        extra="ignore",
     )
 
     network: NetworkConfig
@@ -144,30 +196,34 @@ class StreamingConfigManager(BaseSettings):
     streaming: StreamingConfig
 
     @classmethod
-    def from_yaml(cls, yaml_path: Union[str, Path] = "src/config/config.yaml") -> "StreamingConfigManager":
+    def from_yaml(
+        cls, yaml_path: str | Path = "src/config/config.yaml"
+    ) -> "StreamingConfigManager":
         """Load configuration from YAML file"""
-        
+
         yaml_path = Path(yaml_path)
         if not yaml_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {yaml_path}")
-        
-        with open(yaml_path, 'r', encoding='utf-8') as f:
+
+        with open(yaml_path, encoding="utf-8") as f:
             config_dict = yaml.safe_load(f)
-        
+
         return cls(**config_dict)
 
     def is_client(self) -> bool:
         """Check if running as client (sender)"""
         return self.network.client.type == "jetson_agx_orin"
-    
+
     def is_server(self) -> bool:
         """Check if running as server (receiver)"""
         return self.network.server.type == "x86_64"
-    
-    def get_stream_port(self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]) -> int:
+
+    def get_stream_port(
+        self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]
+    ) -> int:
         """Get port for specific stream type"""
         streams = self.realsense_camera
-        
+
         if stream_type == "color":
             return streams.color.port
         elif stream_type == "depth":
@@ -180,11 +236,13 @@ class StreamingConfigManager(BaseSettings):
             return streams.imu.port
         else:
             raise ValueError(f"Unknown stream type: {stream_type}")
-    
-    def get_stream_config(self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]) -> StreamConfig:
+
+    def get_stream_config(
+        self, stream_type: Literal["color", "depth", "infra1", "infra2", "imu"]
+    ) -> StreamConfig:
         """Get stream configuration for specific type"""
         streams = self.realsense_camera
-        
+
         if stream_type == "color":
             return streams.color
         elif stream_type == "depth":
@@ -197,11 +255,10 @@ class StreamingConfigManager(BaseSettings):
             raise ValueError(f"Unknown stream type: {stream_type}")
 
 
-
 if __name__ == "__main__":
     # Load configuration
     config = StreamingConfigManager.from_yaml("src/config/config.yaml")
-    
+
     # Access configuration
     LOGGER.info(f"Server IP: {config.network.server.ip}")
     LOGGER.info(f"Resolution: {config.realsense_camera.resolution}")
@@ -212,6 +269,6 @@ if __name__ == "__main__":
     LOGGER.info(f"IMU Port: {config.get_stream_port('imu')}")
     LOGGER.info(f"Startup Delay: {config.streaming.startup_delay}")
     LOGGER.info(f"RTP Codec: {config.streaming.rtp.codec}")
-    
+
     # Validate configuration
     LOGGER.info("\nConfiguration loaded successfully!")

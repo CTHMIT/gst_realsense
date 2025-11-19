@@ -1,32 +1,32 @@
 network:
-  client: 
+  client:
     ip: "10.28.134.61"
-    type: "jetson_agx_orin"  
+    type: "jetson_agx_orin"
     nvenc_available: true
-    
+
 
   server:
-    ip: "10.28.134.82"  
+    ip: "10.28.134.82"
     type: "x86_64"
     cuda_available: true
 
   transport:
     protocol: "udp"
-    mtu: 1500 
+    mtu: 1500
 
 realsense_camera:
-  resolution: "640x480"  
+  resolution: "640x480"
   fps: 30
   color:
     enabled: true
-    camera_format: "RGB8"  
+    camera_format: "RGB8"
     encoding: "h264"
     port: 5010
     gstreamer_format: "YUY2"
     ros_fomat: "rgb8"
     bitrate: 8000
 
-  infra1:  
+  infra1:
     enabled: true
     camera_format: "Y8"
     encoding: "h264"
@@ -35,7 +35,7 @@ realsense_camera:
     ros_fomat: "mono8"
     bitrate: 8000
 
-  infra2:  
+  infra2:
     enabled: true
     camera_format: "Y8"
     encoding: "h264"
@@ -46,11 +46,11 @@ realsense_camera:
 
   depth:
     enabled: true
-    camera_format: "Z16"   
-    encoding: "lz4"   # lz4, rtp 
-    port: 5020        
-    gstreamer_format: "gray16-le" 
-    ros_fomat: "16UC1" 
+    camera_format: "Z16"
+    encoding: "lz4"   # lz4, rtp
+    port: 5020
+    gstreamer_format: "gray16-le"
+    ros_fomat: "16UC1"
     bitrate: 8000
 
   imu:
@@ -64,13 +64,13 @@ streaming:
   udp:
     sync: false
     async: false
-    buffer_size: 60000000  
+    buffer_size: 60000000
 
   rtp:
-    codec: "nvv4l2h264enc" 
+    codec: "nvv4l2h264enc"
     tune: "zerolatency"
     speed: "ultrafast"
-    mtu: 1472 
+    mtu: 1472
     config_interval: 1
     payload_types:
       color: 96
@@ -79,12 +79,22 @@ streaming:
       infra2: 101
 
   jitter_buffer:
-    latency: 300  
+    latency: 300
     drop_on_latency: true
 
   queue:
-    max_size_buffers: 10  
+    max_size_buffers: 4
     leaky: "downstream"
+
+  appsink:
+    max_buffers: 4
+    drop: true
+    sync: false
+    emit_signals: true
+
+  lz4:
+    cleanup_ratio: 0.25
+    max_buffer_size_factor: 1.0
 
   processing:
     max_threads: 8

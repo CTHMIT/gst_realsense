@@ -8,37 +8,40 @@ Supports:
 - Infrared: Left/Right infrared streams via pyrealsense with NVENC
 """
 
-from typing import Literal, Optional, Dict, List, Tuple
-from dataclasses import dataclass
-from enum import Enum
-import threading
-import socket
-import lz4.frame
-import numpy as np
-import zlib
-import time
+import collections
 import os
 import queue
+import socket
 import struct
-import collections
-import pyrealsense2 as rs
-import msgpack
+import threading
+import time
+import zlib
+from dataclasses import dataclass
+from enum import Enum
+from typing import Literal, Optional
 
 import gi
-gi.require_version('Gst', '1.0')
-gi.require_version('GstApp', '1.0') 
-from gi.repository import Gst, GLib, GstApp
+import lz4.frame
+import msgpack
+import numpy as np
+import pyrealsense2 as rs
+
+gi.require_version("Gst", "1.0")
+gi.require_version("GstApp", "1.0")
+from gi.repository import GLib, Gst, GstApp  # noqa: E402
 
 Gst.init(None)
 g_main_loop = GLib.MainLoop()
 g_main_loop_thread = threading.Thread(target=g_main_loop.run, daemon=True)
 g_main_loop_thread.start()
 
-from interface.config import StreamingConfigManager, StreamConfig
-from utils.logger import LOGGER
+from interface.config import StreamConfig, StreamingConfigManager  # noqa: E402
+from utils.logger import LOGGER  # noqa: E402
+
 
 class StreamType(Enum):
     """Supported stream types for unified pyrealsense mode"""
+
     COLOR = "color"
     DEPTH = "depth"
     INFRA1 = "infra1"
@@ -49,39 +52,44 @@ class StreamType(Enum):
 @dataclass
 class GStreamerPipeline:
     """GStreamer pipeline container"""
+
     pipeline_str: str
     stream_type: StreamType
     port: int
     pt: int
     running: bool = False
-    gst_pipeline: Optional[Gst.Pipeline] = None
-    udp_socket: Optional[socket.socket] = None
-    socket_thread: Optional[threading.Thread] = None
-    paired_pipeline: Optional['GStreamerPipeline'] = None # For linking IR1/IR2
+    gst_pipeline: Gst.Pipeline | None = None
+    udp_socket: socket.socket | None = None
+    socket_thread: threading.Thread | None = None
+    paired_pipeline: Optional["GStreamerPipeline"] = None  # For linking IR1/IR2
 
 
 class LZ4FrameReassembler:
     """Handles reassembly of chunked LZ4 frames received over UDP with CRC32 integrity check."""
-    def __init__(self, fps: int = 30, buffer_seconds: float = 1.0):
+
+    def __init__(self, fps: int = 30, buffer_seconds: float = 1.0, cleanup_ratio: float = 0.25):
         self.max_buffer_size = int(fps * buffer_seconds)
         self.frame_timeout = buffer_seconds
+        self.cleanup_ratio = cleanup_ratio
 
-        self.buffer = collections.OrderedDict()
+        self.buffer: collections.OrderedDict[int, dict] = collections.OrderedDict()
         self.latest_full_frame_id = -1
-        self.HEADER_FORMAT = "!IHHI"  
+        self.HEADER_FORMAT = "!IHHI"
         self.HEADER_SIZE = struct.calcsize(self.HEADER_FORMAT)
         self.last_cleanup_time = time.time()
 
-    def add_chunk(self, packet: bytes) -> Optional[bytes]:
+    def add_chunk(self, packet: bytes) -> bytes | None:
         try:
             if len(packet) < self.HEADER_SIZE:
                 LOGGER.warning("Received packet smaller than header size.")
                 return None
 
-            header = packet[:self.HEADER_SIZE]
-            data = packet[self.HEADER_SIZE:]
-            
-            frame_id, chunk_index, total_chunks, frame_checksum = struct.unpack(self.HEADER_FORMAT, header)
+            header = packet[: self.HEADER_SIZE]
+            data = packet[self.HEADER_SIZE :]
+
+            frame_id, chunk_index, total_chunks, frame_checksum = struct.unpack(
+                self.HEADER_FORMAT, header
+            )
 
             if frame_id <= self.latest_full_frame_id:
                 return None
@@ -89,108 +97,123 @@ class LZ4FrameReassembler:
                 LOGGER.warning("Received packet with total_chunks = 0.")
                 return None
             if chunk_index >= total_chunks:
-                LOGGER.warning(f"Invalid chunk index {chunk_index}/{total_chunks} for frame {frame_id}.")
+                LOGGER.warning(
+                    f"Invalid chunk index {chunk_index}/{total_chunks} for frame {frame_id}."
+                )
                 return None
 
             if frame_id not in self.buffer:
-                if (time.time() - self.last_cleanup_time > 1.0) or (len(self.buffer) >= self.max_buffer_size):
+                if (time.time() - self.last_cleanup_time > 1.0) or (
+                    len(self.buffer) >= self.max_buffer_size
+                ):
                     self._cleanup_buffer()
-                
+
                 if len(self.buffer) >= self.max_buffer_size:
-                    LOGGER.warning(f"Buffer full ({self.max_buffer_size}). Dropping new frame {frame_id}.")
-                    self.buffer.popitem(last=False) 
-                    
+                    # Optimized cleanup: remove oldest 25% of buffer to avoid frequent cleanups
+                    LOGGER.warning(
+                        f"Buffer full ({self.max_buffer_size}). Batch cleaning old frames."
+                    )
+                    items_to_remove = max(1, int(self.max_buffer_size * self.cleanup_ratio))
+                    for _ in range(items_to_remove):
+                        self.buffer.popitem(last=False)
+
                 self.buffer[frame_id] = {
-                    'total_chunks': total_chunks,
-                    'frame_checksum': frame_checksum, 
-                    'chunks_received': 0,
-                    'data_chunks': {},
-                    'first_seen': time.time()
+                    "total_chunks": total_chunks,
+                    "frame_checksum": frame_checksum,
+                    "chunks_received": 0,
+                    "data_chunks": {},
+                    "first_seen": time.time(),
                 }
-            
+
             frame = self.buffer[frame_id]
-            
-            if frame['total_chunks'] != total_chunks or frame['frame_checksum'] != frame_checksum:
+
+            if frame["total_chunks"] != total_chunks or frame["frame_checksum"] != frame_checksum:
                 LOGGER.warning(f"Inconsistent packet header for frame {frame_id}. Dropping chunk.")
                 return None
 
-            if chunk_index not in frame['data_chunks']:
-                frame['data_chunks'][chunk_index] = data
-                frame['chunks_received'] += 1
+            if chunk_index not in frame["data_chunks"]:
+                frame["data_chunks"][chunk_index] = data
+                frame["chunks_received"] += 1
 
-            if frame['chunks_received'] == frame['total_chunks']:
+            if frame["chunks_received"] == frame["total_chunks"]:
                 self.latest_full_frame_id = frame_id
-                
+
                 try:
-                    full_compressed_data = b"".join([
-                        frame['data_chunks'][i] for i in range(frame['total_chunks'])
-                    ])
+                    full_compressed_data = b"".join(
+                        [frame["data_chunks"][i] for i in range(frame["total_chunks"])]
+                    )
                 except KeyError:
-                    LOGGER.warning(f"Frame {frame_id} missing chunks on reassembly (should not happen).")
+                    LOGGER.warning(
+                        f"Frame {frame_id} missing chunks on reassembly (should not happen)."
+                    )
                     del self.buffer[frame_id]
                     return None
-                
-                del self.buffer[frame_id] 
+
+                del self.buffer[frame_id]
 
                 calculated_checksum = zlib.crc32(full_compressed_data)
-                
-                if calculated_checksum == frame['frame_checksum']:
+
+                if calculated_checksum == frame["frame_checksum"]:
                     return full_compressed_data
                 else:
-                    LOGGER.warning(f"Frame {frame_id} CHECKSUM FAILED! "
-                                   f"Expected {frame['frame_checksum']}, got {calculated_checksum}. Dropping corrupt frame.")
+                    LOGGER.warning(
+                        f"Frame {frame_id} CHECKSUM FAILED! "
+                        f"Expected {frame['frame_checksum']}, got {calculated_checksum}. Dropping corrupt frame."
+                    )
                     return None
 
         except struct.error as e:
             LOGGER.warning(f"LZ4 Reassembler header unpack error: {e}")
         except Exception as e:
             LOGGER.warning(f"LZ4 Reassembler error: {e}")
-        
+
         return None
 
-    def _cleanup_buffer(self):
+    def _cleanup_buffer(self) -> None:
         """Remove old, incomplete frames from the buffer based on timeout or ID."""
         self.last_cleanup_time = time.time()
         current_time = time.time()
-        
+
         keys_to_delete = [
-            k for k, v in self.buffer.items()
-            if k < self.latest_full_frame_id or (current_time - v['first_seen']) > self.frame_timeout
+            k
+            for k, v in self.buffer.items()
+            if k < self.latest_full_frame_id
+            or (current_time - v["first_seen"]) > self.frame_timeout
         ]
-        
+
         for k in keys_to_delete:
             if k in self.buffer:
                 LOGGER.debug(f"Cleaning up stale frame {k} from buffer.")
                 del self.buffer[k]
-        
-        while len(self.buffer) > self.max_buffer_size * 1.5: 
+
+        while len(self.buffer) > self.max_buffer_size * 1.5:
             LOGGER.warning("Buffer overflow safety valve. Evicting oldest.")
             self.buffer.popitem(last=False)
 
 
 class GStreamerInterface:
-    def __init__(self, config: StreamingConfigManager):
+    def __init__(self, config: StreamingConfigManager) -> None:
         self.config: StreamingConfigManager = config
-        self.pipelines: Dict[StreamType, GStreamerPipeline] = {}
+        self.pipelines: dict[StreamType, GStreamerPipeline] = {}
         self.running = False
-        self.rs_pipeline: Optional[rs.pipeline] = None
-        self.rs_thread: Optional[threading.Thread] = None
-        self.compression_queue: queue.Queue = queue.Queue(maxsize=16) 
-        self.compression_thread: Optional[threading.Thread] = None
-        self.decompression_queue = queue.Queue(maxsize=16)
-        self.decompression_workers: List[threading.Thread] = []
-        self._num_decomp_workers = max(1, os.cpu_count()-1)
+        self.rs_pipeline: rs.pipeline | None = None
+        self.rs_thread: threading.Thread | None = None
+        self.compression_queue: queue.Queue = queue.Queue(maxsize=16)
+        self.compression_thread: threading.Thread | None = None
+        self.decompression_queue: queue.Queue = queue.Queue(maxsize=16)
+        self.decompression_workers: list[threading.Thread] = []
+        self._num_decomp_workers = max(1, os.cpu_count() - 1)
         self._lz4_frame_id = 0
-        
-        self.ipc_socket: Optional[socket.socket] = None
-        self.ipc_target: Tuple[str, int] = ("127.0.0.1", 12345)
+
+        self.ipc_socket: socket.socket | None = None
+        self.ipc_target: tuple[str, int] = ("127.0.0.1", 12345)
         # self.imu_config = self.config.realsense_camera.imu
 
         # self.imu_rcv_socket: Optional[socket.socket] = None
         # self.imu_rcv_thread: Optional[threading.Thread] = None
         # self.imu_socket: Optional[socket.socket] = None
         # self.imu_port: int = self.imu_config.port
-        
+
         self._validate_config()
 
     def connect_ipc_socket(self) -> bool:
@@ -198,14 +221,23 @@ class GStreamerInterface:
         try:
             self.ipc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             LOGGER.info(f"IPC TCP Client connecting to {self.ipc_target}...")
-            
+
             self.ipc_socket.connect(self.ipc_target)
-            
+
+            # Optimize socket buffer for IPC
+            self.ipc_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_SNDBUF, self.config.streaming.udp.buffer_size
+            )
+            self.ipc_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF, self.config.streaming.udp.buffer_size
+            )
+            self.ipc_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
             LOGGER.info("IPC TCP Client connected to ROS Server.")
 
             # if not self.imu_rcv_thread:
             #     LOGGER.info("Starting IMU receiver thread...")
-            #     self.running = True 
+            #     self.running = True
             #     self.imu_rcv_thread = threading.Thread(
             #         target=self._imu_socket_listener,
             #         daemon=True
@@ -214,22 +246,22 @@ class GStreamerInterface:
 
             return True
         except ConnectionRefusedError:
-            LOGGER.error(f"Connection refused. Is the ROS Publisher process running?")
+            LOGGER.error("Connection refused. Is the ROS Publisher process running?")
             return False
         except Exception as e:
             LOGGER.error(f"Failed to connect IPC socket: {e}", exc_info=True)
             return False
-    
-    
 
-    def _validate_config(self):
+    def _validate_config(self) -> None:
         """Validate configuration for GStreamer compatibility"""
         if self.config.network.transport.protocol not in ["udp", "tcp"]:
             raise ValueError(f"Unsupported protocol: {self.config.network.transport.protocol}")
-        
+
         if self.config.streaming.rtp.mtu > self.config.network.transport.mtu:
-            LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
-    
+            LOGGER.warning(
+                f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})"
+            )
+
     # def _imu_socket_listener(self):
     #     """
     #     Thread function to listen on UDP socket for IMU packets
@@ -247,23 +279,23 @@ class GStreamerInterface:
     #             try:
     #                 while True:
     #                     latest_packet, _ = self.imu_rcv_socket.recvfrom(1024)
-                        
-    #             except BlockingIOError: 
-    #                 pass 
+
+    #             except BlockingIOError:
+    #                 pass
 
     #             if latest_packet and self.ipc_socket:
     #                 try:
     #                     msg_len = struct.pack("!I", len(latest_packet))
     #                     self.ipc_socket.sendall(msg_len + latest_packet)
-                    
+
     #                 except BrokenPipeError:
     #                     LOGGER.error("ROS IPC Server disconnected! Stopping IMU listener.")
     #                     self.running = False
     #                 except Exception as e:
     #                     if self.running:
     #                         LOGGER.warning(f"IMU IPC forward error: {e}")
-                
-    #             time.sleep(0.001) 
+
+    #             time.sleep(0.001)
 
     #     except Exception as e:
     #             if self.running:
@@ -277,15 +309,15 @@ class GStreamerInterface:
     # def imu_callback(self, frame):
     #         if not self.running or not self.imu_socket:
     #             return
-            
+
     #         try:
     #             if frame.is_motion_frame():
     #                 data = frame.as_motion_frame().get_motion_data()
     #                 timestamp_ns = int(frame.get_timestamp() * 1_000_000)
     #                 packet = None
-                    
+
     #                 stream_type = frame.get_profile().stream_type()
-                    
+
     #                 if stream_type == rs.stream.accel:
     #                     packet = {
     #                         "type": "imu_accel",
@@ -298,27 +330,25 @@ class GStreamerInterface:
     #                         "timestamp_ns": timestamp_ns,
     #                         "data": (data.x, data.y, data.z)
     #                     }
-                    
+
     #                 if packet:
     #                     packed_data = msgpack.packb(packet)
     #                     self.imu_socket.sendto(packed_data, (self.config.network.server.ip, self.imu_port))
-            
+
     #         except Exception as e:
     #             LOGGER.warning(f"IMU callback error: {e}")
 
     def _pyrealsense_capture_loop(
-        self, 
-        stream_types: List[StreamType],
-        pipelines: Dict[StreamType, GStreamerPipeline]
-    ):
+        self, stream_types: list[StreamType], pipelines: dict[StreamType, GStreamerPipeline]
+    ) -> None:
         """
-        Unified thread function to run pyrealsense2 and push frames 
+        Unified thread function to run pyrealsense2 and push frames
         to all requested appsrc pipelines (Color, Depth, IR1, IR2).
-        """      
-        
+        """
+
         appsrcs = {}
         rs_config = rs.config()
-        
+
         width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
@@ -329,47 +359,57 @@ class GStreamerInterface:
             if StreamType.COLOR in stream_types:
                 LOGGER.info(f"Configuring RealSense: Color at {width}x{height} @ {fps}fps (BGR8)")
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-                appsrcs[StreamType.COLOR] = pipelines[StreamType.COLOR].gst_pipeline.get_by_name("src")
+                appsrcs[StreamType.COLOR] = pipelines[StreamType.COLOR].gst_pipeline.get_by_name(
+                    "src"
+                )
 
             if StreamType.DEPTH in stream_types:
                 LOGGER.info(f"Configuring RealSense: Depth at {width}x{height} @ {fps}fps (Z16)")
                 rs_config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-                appsrcs[StreamType.DEPTH] = pipelines[StreamType.DEPTH].gst_pipeline.get_by_name("src")
+                appsrcs[StreamType.DEPTH] = pipelines[StreamType.DEPTH].gst_pipeline.get_by_name(
+                    "src"
+                )
 
             if StreamType.INFRA1 in stream_types:
                 LOGGER.info(f"Configuring RealSense: Infra1 at {width}x{height} @ {fps}fps (Y8)")
                 rs_config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, fps)
-                appsrcs[StreamType.INFRA1] = pipelines[StreamType.INFRA1].gst_pipeline.get_by_name("src")
+                appsrcs[StreamType.INFRA1] = pipelines[StreamType.INFRA1].gst_pipeline.get_by_name(
+                    "src"
+                )
 
             if StreamType.INFRA2 in stream_types:
                 LOGGER.info(f"Configuring RealSense: Infra2 at {width}x{height} @ {fps}fps (Y8)")
                 rs_config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, fps)
-                appsrcs[StreamType.INFRA2] = pipelines[StreamType.INFRA2].gst_pipeline.get_by_name("src")
+                appsrcs[StreamType.INFRA2] = pipelines[StreamType.INFRA2].gst_pipeline.get_by_name(
+                    "src"
+                )
 
             for stream_type in stream_types:
                 # if stream_type == StreamType.IMU:
                 #     continue
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
-                    LOGGER.error(f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping.")
+                    LOGGER.error(
+                        f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping."
+                    )
                     return
 
             # if StreamType.IMU in stream_types:
             #     LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
-            
+
             #     rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz)
             #     rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
 
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config)
             pipeline_started = True
-            
+
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor:
                 if depth_sensor.supports(rs.option.emitter_enabled):
                     depth_sensor.set_option(rs.option.emitter_enabled, 1)
                 if depth_sensor.supports(rs.option.laser_power):
-                    depth_sensor.set_option(rs.option.laser_power, 150) 
-            
+                    depth_sensor.set_option(rs.option.laser_power, 150)
+
             LOGGER.info("Unified RealSense pipeline started. Streaming...")
 
             # 3. Capture-Push Loop
@@ -379,7 +419,7 @@ class GStreamerInterface:
 
                 # accel_frame = frames.first_or_default(rs.stream.accel)
                 # gyro_frame = frames.first_or_default(rs.stream.gyro)
-                
+
                 # if accel_frame:
                 #     self.imu_callback(accel_frame)
                 # if gyro_frame:
@@ -395,7 +435,7 @@ class GStreamerInterface:
                         appsrcs[StreamType.COLOR].push_buffer(color_buffer)
                     else:
                         LOGGER.warning("Missing Color frame, skipping")
-                
+
                 # --- Push Depth Frame ---
                 if StreamType.DEPTH in appsrcs:
                     depth_frame = frames.get_depth_frame()
@@ -442,16 +482,12 @@ class GStreamerInterface:
                 try:
                     self.rs_pipeline.stop()
                 except RuntimeError:
-                    pass 
-                
+                    pass
+
             self.rs_pipeline = None
             LOGGER.info("Unified pyrealsense2 pipeline cleanup done.")
 
-    
-    def start_pyrealsense_streams(
-        self,
-        stream_types: List[StreamType]
-    ) -> bool:
+    def start_pyrealsense_streams(self, stream_types: list[StreamType]) -> bool:
         """
         Builds, launches, and starts the capture thread for all streams
         using the unified pyrealsense SDK method.
@@ -461,7 +497,7 @@ class GStreamerInterface:
         LOGGER.info("=" * 40)
 
         pipelines = {}
-        
+
         final_stream_list = list(set(stream_types))
 
         try:
@@ -477,7 +513,7 @@ class GStreamerInterface:
                 # if stream_type == StreamType.IMU:
                 #     continue
 
-                if stream_type not in pipelines: 
+                if stream_type not in pipelines:
                     pipelines[stream_type] = self.build_sender_pipeline(stream_type)
 
             if StreamType.INFRA1 in pipelines and StreamType.INFRA2 in pipelines:
@@ -499,9 +535,9 @@ class GStreamerInterface:
             self.rs_thread = threading.Thread(
                 target=self._pyrealsense_capture_loop,
                 args=(final_stream_list, pipelines),
-                daemon=True
+                daemon=True,
             )
-            self.rs_thread.start()            
+            self.rs_thread.start()
 
             LOGGER.info("All streams initiated via pyrealsense.")
             return True
@@ -511,47 +547,52 @@ class GStreamerInterface:
             self.running = False
             return False
 
-    
-    def build_sender_pipeline(
-        self, 
-        stream_type: StreamType
-    ) -> GStreamerPipeline:
+    def build_sender_pipeline(self, stream_type: StreamType) -> GStreamerPipeline:
         """
         Build GStreamer sender pipeline for specified stream type
-        
+
         Handles: COLOR, DEPTH, INFRA1, INFRA2
-        
+
         """
         stream_config = self._get_stream_config(stream_type)
         port = self._get_port(stream_type)
         pt = self._get_payload_type(stream_type)
-        
+
         width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
 
         if stream_type == StreamType.DEPTH:
-            pipeline_str = "" 
-            
-            if stream_config.encoding == 'lz4':
-                LOGGER.info(f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc")
-                
+            pipeline_str = ""
+
+            if stream_config.encoding == "lz4":
+                LOGGER.info(
+                    f"Building Z16 (lossless) pipeline for {stream_type.value} using pyrealsense + appsrc"
+                )
+
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true ! "
-                    f"queue max-size-buffers=2 ! "
+                    f"appsrc name=src format=time is-live=true do-timestamp=true ! "
+                    f"queue max-size-buffers={self.config.streaming.queue.max_size_buffers} leaky={self.config.streaming.queue.leaky} ! "
                     f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1 ! "
-                    f"appsink name=sink emit-signals=true sync=false"
+                    f"appsink name=sink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                    f"sync={str(self.config.streaming.appsink.sync).lower()} "
+                    f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                    f"drop={str(self.config.streaming.appsink.drop).lower()}"
                 )
                 LOGGER.info(f"Built Z16 sender pipeline for {stream_type.value} on port {port}")
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
 
-            elif stream_config.encoding == 'rtp':
-                LOGGER.info(f"Building Z16 (RTPvRAW) pipeline for {stream_type.value} using pyrealsense + appsrc")
-                
+            elif stream_config.encoding == "rtp":
+                LOGGER.info(
+                    f"Building Z16 (RTPvRAW) pipeline for {stream_type.value} using pyrealsense + appsrc"
+                )
+
                 # "Hack"(16-bit -> 8-bit)
-                hack_width = width * 2 
-                
-                hack_caps_str = f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
+                hack_width = width * 2
+
+                hack_caps_str = (
+                    f"video/x-raw,format=GRAY8,width={hack_width},height={height},framerate={fps}/1"
+                )
 
                 payloader = f"rtpvrawpay pt={pt} mtu={self.config.streaming.rtp.mtu}"
                 sink = (
@@ -559,38 +600,45 @@ class GStreamerInterface:
                     f"sync=false auto-multicast=false"
                 )
                 pipeline_str = (
-                    f"appsrc name=src format=time is-live=true caps=\"{hack_caps_str}\" ! " 
-                    f"queue max-size-buffers=2 ! "
+                    f'appsrc name=src format=time is-live=true do-timestamp=true caps="{hack_caps_str}" ! '
+                    f"queue max-size-buffers={self.config.streaming.queue.max_size_buffers} leaky={self.config.streaming.queue.leaky} ! "
                     f"{payloader} ! "
                     f"{sink}"
                 )
 
-                LOGGER.info(f"Built Z16 (RTPvRAW) sender pipeline for {stream_type.value} on port {port}")
+                LOGGER.info(
+                    f"Built Z16 (RTPvRAW) sender pipeline for {stream_type.value} on port {port}"
+                )
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
-            
+
             else:
                 raise ValueError(f"Unsupported encoding for depth stream: {stream_config.encoding}")
 
             return GStreamerPipeline(
-                pipeline_str=pipeline_str,
-                stream_type=stream_type,
-                port=port, 
-                pt=pt
+                pipeline_str=pipeline_str, stream_type=stream_type, port=port, pt=pt
             )
-        
-        elif stream_type == StreamType.COLOR or stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-            
+
+        elif stream_type == StreamType.COLOR or stream_type in [
+            StreamType.INFRA1,
+            StreamType.INFRA2,
+        ]:
+
             appsrc_caps_str = ""
             if stream_type == StreamType.COLOR:
-                LOGGER.info(f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc")
-                appsrc_caps_str = f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
-            else: 
+                LOGGER.info(
+                    f"Building COLOR pipeline for {stream_type.value} using pyrealsense + appsrc"
+                )
+                appsrc_caps_str = (
+                    f"video/x-raw,format=BGR,width={width},height={height},framerate={fps}/1"
+                )
+            else:
                 LOGGER.info(f"Building {stream_type.value} pipeline using pyrealsense + appsrc")
-                appsrc_caps_str = f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+                appsrc_caps_str = (
+                    f"video/x-raw,format=GRAY8,width={width},height={height},framerate={fps}/1"
+                )
 
             cpu_nv12_caps_str = (
-                f"video/x-raw,format=NV12,"
-                f"width={width},height={height},framerate={fps}/1"
+                f"video/x-raw,format=NV12," f"width={width},height={height},framerate={fps}/1"
             )
             nvmm_caps_str = (
                 f"video/x-raw(memory:NVMM),format=NV12,"
@@ -611,47 +659,43 @@ class GStreamerInterface:
                 )
             else:
                 conversion_pipeline_str = (
-                    f"videoconvert ! "
-                    f"{cpu_nv12_caps_str} ! "
-                    f"{encoder_element}"
+                    f"videoconvert ! " f"{cpu_nv12_caps_str} ! " f"{encoder_element}"
                 )
 
             payloader = f"rtph264pay pt={pt} mtu={self.config.streaming.rtp.mtu}"
-            
+
             protocol = self.config.network.transport.protocol
             server_ip = self.config.network.server.ip
 
             sink = (
-                f"{protocol}sink host={server_ip} port={port} "
-                f"sync=false auto-multicast=false"
+                f"{protocol}sink host={server_ip} port={port} " f"sync=false auto-multicast=false"
             )
 
             pipeline_str = (
-                f"appsrc name=src format=time is-live=true caps=\"{appsrc_caps_str}\" ! "
-                f"queue max-size-buffers=2 ! "
+                f'appsrc name=src format=time is-live=true do-timestamp=true caps="{appsrc_caps_str}" ! '
+                f"queue max-size-buffers={self.config.streaming.queue.max_size_buffers} leaky={self.config.streaming.queue.leaky} ! "
                 f"{conversion_pipeline_str} ! "
-                f"{payloader} ! " 
+                f"{payloader} ! "
                 f"{sink}"
             )
 
-            LOGGER.info(f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}")
+            LOGGER.info(
+                f"Built {stream_config.encoding} sender pipeline for {stream_type.value} on port {port} , pt {pt}"
+            )
             LOGGER.info(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
-                pipeline_str=pipeline_str,
-                stream_type=stream_type,
-                port=port, 
-                pt=pt
+                pipeline_str=pipeline_str, stream_type=stream_type, port=port, pt=pt
             )
-        
+
         else:
             raise ValueError(f"build_sender_pipeline called with unhandled type: {stream_type}")
-    
+
     def build_receiver_pipeline(
         self,
         stream_type: StreamType,
-        receiver_ip: str = "0.0.0.0",
-        only_display: bool = False, 
+        receiver_ip: str = "0.0.0.0",  # nosec
+        only_display: bool = False,
     ) -> GStreamerPipeline:
         """
         Build GStreamer receiver pipeline for specified stream type
@@ -663,15 +707,17 @@ class GStreamerInterface:
         width = self.config.realsense_camera.width
         height = self.config.realsense_camera.height
         fps = self.config.realsense_camera.fps
-        
-        if stream_type == StreamType.DEPTH:           
+
+        if stream_type == StreamType.DEPTH:
 
             if stream_config.encoding == "lz4":
-                
+
                 sink = self._build_sink(stream_type)
 
                 if only_display:
-                    LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)")
+                    LOGGER.info(
+                        f"Building Z16 receiver pipeline for {stream_type.value} (Display Only)"
+                    )
                     pipeline_str = (
                         f"appsrc name=src format=time is-live=true ! "
                         f"queue max-size-buffers=2 ! "
@@ -682,10 +728,13 @@ class GStreamerInterface:
                 else:
                     LOGGER.info(f"Building Z16 receiver pipeline for {stream_type.value} ")
                     pipeline_str = (
-                        f"appsrc name=src format=time is-live=true ! "
-                        f"queue max-size-buffers=2 ! "
+                        f"appsrc name=src format=time is-live=true do-timestamp=true ! "
+                        f"queue max-size-buffers={self.config.streaming.queue.max_size_buffers} leaky={self.config.streaming.queue.leaky} ! "
                         f"videoparse width={width} height={height} format=gray16-le framerate={fps}/1 ! "
-                        f"appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                        f"appsink name=depth_appsink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                        f"drop={str(self.config.streaming.appsink.drop).lower()} "
+                        f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                        f"sync={str(self.config.streaming.appsink.sync).lower()}"
                     )
 
                 LOGGER.info(f"Built Z16 receiver pipeline for {stream_type.value} on port {port}")
@@ -694,39 +743,46 @@ class GStreamerInterface:
             if stream_config.encoding == "rtp":
                 hack_width = width * 2
                 latency = self.config.streaming.jitter_buffer.latency
-                
+
                 caps_str = (
                     f"application/x-rtp,media=video,clock-rate=90000,"
-                    f"encoding-name=RAW,sampling=GRAY8," # GRAY8
-                    f"width={hack_width},height={height},payload={pt}" # hack_width
+                    f"encoding-name=RAW,sampling=GRAY8,"  # GRAY8
+                    f"width={hack_width},height={height},payload={pt}"  # hack_width
                 )
-                
+
                 # GRAY16_LE caps
-                revert_caps_str = f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
-                
+                revert_caps_str = (
+                    f"video/x-raw,format=GRAY16_LE,width={width},height={height},framerate={fps}/1"
+                )
+
                 sink_element = ""
                 if only_display:
                     sink_element = self._build_sink(stream_type)
                 else:
-                    sink_element = "appsink name=depth_appsink emit-signals=true drop=true max-buffers=1 sync=false"
+                    sink_element = (
+                        f"appsink name=depth_appsink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                        f"drop={str(self.config.streaming.appsink.drop).lower()} "
+                        f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                        f"sync={str(self.config.streaming.appsink.sync).lower()}"
+                    )
 
                 pipeline_str = (
-                    f"{self.config.network.transport.protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
+                    f'{self.config.network.transport.protocol}src address={receiver_ip} port={port} caps="{caps_str}" ! '
                     f"rtpjitterbuffer latency={latency} ! "
                     f"rtpvrawdepay ! "
                     # capsfilter 1280@GRAY8 to 640@GRAY16_LE
-                    f"capsfilter caps=\"{revert_caps_str}\" ! "
+                    f'capsfilter caps="{revert_caps_str}" ! '
                     f"videoconvert ! queue ! "
                     f"{sink_element}"
                 )
 
-                LOGGER.info(f"Built Z16 (RTPvRAW) receiver pipeline for {stream_type.value} on port {port}")
+                LOGGER.info(
+                    f"Built Z16 (RTPvRAW) receiver pipeline for {stream_type.value} on port {port}"
+                )
                 LOGGER.debug(f"Pipeline: {pipeline_str}")
 
             return GStreamerPipeline(
-                pipeline_str=pipeline_str,
-                stream_type=stream_type,
-                port=port, pt=pt
+                pipeline_str=pipeline_str, stream_type=stream_type, port=port, pt=pt
             )
 
         elif stream_type in [StreamType.COLOR, StreamType.INFRA1, StreamType.INFRA2]:
@@ -741,10 +797,10 @@ class GStreamerInterface:
 
             # 共用前半段：收 RTP + 解 H264 + 轉平面格式
             pipeline_prefix = (
-                f"{protocol}src address={receiver_ip} port={port} caps=\"{caps_str}\" ! "
+                f'{protocol}src address={receiver_ip} port={port} caps="{caps_str}" ! '
                 f"rtpjitterbuffer latency={latency} ! "
                 f"rtph264depay ! "
-                f"{decoder_core} ! "      # h264parse ! nvh264dec / avdec_h264
+                f"{decoder_core} ! "  # h264parse ! nvh264dec / avdec_h264
                 "videoconvert ! "
             )
 
@@ -758,11 +814,13 @@ class GStreamerInterface:
                     # 只鎖 BGR，不管寬高/幀率，交給 GStreamer 自己談
                     output_caps = "video/x-raw,format=BGR"
                     pipeline_str = (
-                        pipeline_prefix +
-                        f"{output_caps} ! "
+                        pipeline_prefix + f"{output_caps} ! "
                         "queue ! "
-                        "appsink name=color_appsink emit-signals=true drop=true "
-                        "max-buffers=1 sync=false"
+                        "queue ! "
+                        f"appsink name=color_appsink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                        f"drop={str(self.config.streaming.appsink.drop).lower()} "
+                        f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                        f"sync={str(self.config.streaming.appsink.sync).lower()}"
                     )
 
             elif stream_type == StreamType.INFRA1:
@@ -774,11 +832,13 @@ class GStreamerInterface:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver ")
                     output_caps = "video/x-raw,format=GRAY8"
                     pipeline_str = (
-                        pipeline_prefix +
-                        f"{output_caps} ! "
+                        pipeline_prefix + f"{output_caps} ! "
                         "queue ! "
-                        "appsink name=ir1_appsink emit-signals=true drop=true "
-                        "max-buffers=1 sync=false"
+                        "queue ! "
+                        f"appsink name=ir1_appsink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                        f"drop={str(self.config.streaming.appsink.drop).lower()} "
+                        f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                        f"sync={str(self.config.streaming.appsink.sync).lower()}"
                     )
 
             elif stream_type == StreamType.INFRA2:
@@ -790,11 +850,13 @@ class GStreamerInterface:
                     LOGGER.info(f"Building {stream_type.value} H.264 receiver ")
                     output_caps = "video/x-raw,format=GRAY8"
                     pipeline_str = (
-                        pipeline_prefix +
-                        f"{output_caps} ! "
+                        pipeline_prefix + f"{output_caps} ! "
                         "queue ! "
-                        "appsink name=ir2_appsink emit-signals=true drop=true "
-                        "max-buffers=1 sync=false"
+                        "queue ! "
+                        f"appsink name=ir2_appsink emit-signals={str(self.config.streaming.appsink.emit_signals).lower()} "
+                        f"drop={str(self.config.streaming.appsink.drop).lower()} "
+                        f"max-buffers={self.config.streaming.appsink.max_buffers} "
+                        f"sync={str(self.config.streaming.appsink.sync).lower()}"
                     )
 
             LOGGER.info(
@@ -811,7 +873,7 @@ class GStreamerInterface:
             )
         else:
             raise ValueError(f"build_receiver_pipeline called with unhandled type: {stream_type}")
-    
+
     def _get_decoder_element(self) -> str:
         """Get the appropriate H.264 decoder element based on config"""
         if self.config.network.server.cuda_available:
@@ -819,7 +881,7 @@ class GStreamerInterface:
             for decoder in possible_decoders:
                 if Gst.ElementFactory.find(decoder):
                     LOGGER.debug(f"Using hardware decoder: {decoder}")
-                    return decoder 
+                    return decoder
             LOGGER.warning(
                 f"config.server.cuda_available is True, but no NVIDIA "
                 f"decoder ({', '.join(possible_decoders)}) was found. "
@@ -829,15 +891,13 @@ class GStreamerInterface:
         else:
             LOGGER.debug("Using software decoder: avdec_h264")
             return "avdec_h264"
-    
+
     def _build_encoder(
-        self,
-        stream_type: StreamType,
-        stream_config: StreamConfig
-    ) -> Tuple[str, bool]:
+        self, stream_type: StreamType, stream_config: StreamConfig
+    ) -> tuple[str, bool]:
         """
         Build encoder element string and return its type.
-        
+
         Returns:
             Tuple[str, bool]: (encoder_element_string, is_hw_encoder)
         """
@@ -847,11 +907,11 @@ class GStreamerInterface:
         if stream_config.encoding == "h264":
             encoder_element = None
             is_hw_encoder = False
-            
+
             # Check if hardware encoding is available and enabled
             if codec == "nvv4l2h264enc" and self.config.network.client.nvenc_available:
                 bitrate_bps = bitrate * 1000
-                
+
                 encoder_element = (
                     f"nvv4l2h264enc bitrate={bitrate_bps} "
                     f"insert-sps-pps=true control-rate=1 "
@@ -859,7 +919,7 @@ class GStreamerInterface:
                 )
                 is_hw_encoder = True
                 LOGGER.info(f"Using HW encoder (nvv4l2h264enc) for {stream_type.value}")
-            
+
             # Fallback to software encoder
             if encoder_element is None:
                 LOGGER.info(f"Using SW encoder (x264enc) for {stream_type.value}")
@@ -872,28 +932,24 @@ class GStreamerInterface:
             return encoder_element, is_hw_encoder
         else:
             raise ValueError(f"Unsupported encoding: {stream_config.encoding}")
-    
-    def _build_decoder(
-        self,
-        stream_type: StreamType,
-        stream_config: StreamConfig
-    ) -> str:
+
+    def _build_decoder(self, stream_type: StreamType, stream_config: StreamConfig) -> str:
         """
         Build core decoder element string (h264parse -> decoder).
         """
         decoder_element = self._get_decoder_element()
-        
+
         return f"h264parse ! {decoder_element}"
-    
+
     def _build_sink(self, stream_type: StreamType) -> str:
         """Build sink element string"""
-        
+
         LOGGER.info("Using xvimagesink for display.")
-        return (
-            "xvimagesink sync=false"
-        )
-    
-    def _on_bus_message(self, bus, message, pipeline):
+        return "xvimagesink sync=false"
+
+    def _on_bus_message(
+        self, bus: Gst.Bus, message: Gst.Message, pipeline: GStreamerPipeline
+    ) -> None:
         """Handle GStreamer bus messages for debugging"""
         t = message.type
         if t == Gst.MessageType.ERROR:
@@ -910,86 +966,86 @@ class GStreamerInterface:
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == pipeline.gst_pipeline:
                 old_state, new_state, pending = message.parse_state_changed()
-                LOGGER.debug(f"State changed [{pipeline.stream_type.value}]: "
-                            f"{old_state.value_nick} -> {new_state.value_nick}")
-    
+                LOGGER.debug(
+                    f"State changed [{pipeline.stream_type.value}]: "
+                    f"{old_state.value_nick} -> {new_state.value_nick}"
+                )
+
     def _get_payload_type(self, stream_type: StreamType) -> int:
         """Get RTP payload type for stream"""
         payload_types = self.config.streaming.rtp.payload_types
-        
+
         type_map = {
             StreamType.COLOR: "color",
             StreamType.DEPTH: "depth",
             StreamType.INFRA1: "infra1",
-            StreamType.INFRA2: "infra2"
+            StreamType.INFRA2: "infra2",
         }
-        
+
         key = type_map.get(stream_type)
         if key and key in payload_types:
-            return payload_types[key]
+            return payload_types[key]  # type: ignore[no-any-return]
         if stream_type.value in payload_types:
-             return payload_types[stream_type.value]
+            return payload_types[stream_type.value]  # type: ignore[no-any-return]
 
-        LOGGER.warning(f"Payload type for {stream_type.value} (key: {key}) not found in config. "
-                       f"Using default 96.")
+        LOGGER.warning(
+            f"Payload type for {stream_type.value} (key: {key}) not found in config. "
+            f"Using default 96."
+        )
         return 96
-    
-    def launch_sender_pipeline(
-        self,
-        pipeline: GStreamerPipeline
-    ):
+
+    def launch_sender_pipeline(self, pipeline: GStreamerPipeline) -> None:
         """Launch a sender pipeline with proper setup"""
         scfg = self._get_stream_config(pipeline.stream_type)
-        
+
         if pipeline.stream_type == StreamType.DEPTH and scfg.encoding == "lz4":
             self._launch_lz4_sender(pipeline)
         else:
-            self._launch_standard_sender(pipeline) # All H.264 streams
-    
-    
-    
-    def _launch_standard_sender(self, pipeline: GStreamerPipeline):
-        """Launch standard H.264 sender """
+            self._launch_standard_sender(pipeline)  # All H.264 streams
+
+    def _launch_standard_sender(self, pipeline: GStreamerPipeline) -> None:
+        """Launch standard H.264 sender"""
         try:
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
+
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
-            
+
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
-            
+
             is_passive_stream = pipeline.stream_type == StreamType.INFRA2
 
             if ret == Gst.StateChangeReturn.FAILURE:
                 if is_passive_stream:
-                    LOGGER.warning(f"Passive sender pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push.")
+                    LOGGER.warning(
+                        f"Passive sender pipeline {pipeline.stream_type.value} failed to set to PLAYING immediately. Waiting for primary data push."
+                    )
                 else:
-                    LOGGER.debug(f"sender pipeline {pipeline.stream_type.value} waiting for appsrc data.")
-            
+                    LOGGER.debug(
+                        f"sender pipeline {pipeline.stream_type.value} waiting for appsrc data."
+                    )
+
             LOGGER.info(f"Initiated {pipeline.stream_type.value} sender pipeline.")
-            
+
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
-            
+
         except Exception as e:
             LOGGER.error(f"Launch standard sender failed: {e}")
             self._cleanup_pipeline(pipeline)
             raise
-    
-    def launch_receiver_pipeline(
-        self,
-        pipeline: GStreamerPipeline
-    ):
+
+    def launch_receiver_pipeline(self, pipeline: GStreamerPipeline) -> None:
         """Launch a receiver pipeline"""
         scfg = self._get_stream_config(pipeline.stream_type)
-        
+
         if pipeline.stream_type == StreamType.DEPTH and scfg.encoding == "lz4":
             self._launch_lz4_receiver(pipeline)
         else:
-            self._launch_standard_receiver(pipeline) 
-    
-    def _launch_standard_receiver(self, pipeline: GStreamerPipeline):
+            self._launch_standard_receiver(pipeline)
+
+    def _launch_standard_receiver(self, pipeline: GStreamerPipeline) -> None:
         """
         Launch standard H.264 receiver with enhanced debugging.
         Handles: COLOR, INFRA1, INFRA2
@@ -997,27 +1053,29 @@ class GStreamerInterface:
         try:
             LOGGER.info(f"Launching receiver for {pipeline.stream_type.value}")
             LOGGER.info(f"Pipeline: {pipeline.pipeline_str}")
-            
+
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
+
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
 
-            if pipeline.stream_type ==  StreamType.COLOR:
+            if pipeline.stream_type == StreamType.COLOR:
                 appsink = pipeline.gst_pipeline.get_by_name("color_appsink")
                 if appsink:
-                    LOGGER.info(f"Connecting color_appsink callback for {pipeline.stream_type.value}")
+                    LOGGER.info(
+                        f"Connecting color_appsink callback for {pipeline.stream_type.value}"
+                    )
                     appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
-                    LOGGER.info(f"Running in display mode")
+                    LOGGER.info("Running in display mode")
             elif pipeline.stream_type == StreamType.INFRA1:
                 appsink = pipeline.gst_pipeline.get_by_name("ir1_appsink")
                 if appsink:
                     LOGGER.info(f"Connecting ir1_appsink callback for {pipeline.stream_type.value}")
                     appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
-                    LOGGER.info(f"Running in display mode")
+                    LOGGER.info("Running in display mode")
 
             elif pipeline.stream_type == StreamType.INFRA2:
                 appsink = pipeline.gst_pipeline.get_by_name("ir2_appsink")
@@ -1025,62 +1083,64 @@ class GStreamerInterface:
                     LOGGER.info(f"Connecting ir2_appsink callback for {pipeline.stream_type.value}")
                     appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
-                    LOGGER.info(f"Running in display mode")
+                    LOGGER.info("Running in display mode")
 
             elif pipeline.stream_type == StreamType.DEPTH:
                 appsink = pipeline.gst_pipeline.get_by_name("depth_appsink")
                 if appsink:
-                    LOGGER.info(f"Connecting depth_appsink callback for {pipeline.stream_type.value}")
+                    LOGGER.info(
+                        f"Connecting depth_appsink callback for {pipeline.stream_type.value}"
+                    )
                     appsink.connect("new-sample", self._on_new_sample, pipeline)
                 else:
                     LOGGER.info("Running in display mode (no depth_appsink found)")
-      
+
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
-            
+
             state_change, state, pending = pipeline.gst_pipeline.get_state(5 * Gst.SECOND)
-            
+
             if state == Gst.State.PLAYING:
                 LOGGER.info(f"✓ Started receiver {pipeline.stream_type.value}")
             else:
                 LOGGER.warning(f"Pipeline state: {state.value_nick}, pending: {pending.value_nick}")
-            
+
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
-            
+
         except Exception as e:
             LOGGER.error(f"Launch receiver failed: {e}", exc_info=True)
             self._cleanup_pipeline(pipeline)
             raise
 
-    def _lz4_compression_worker(self, udp_socket: socket.socket, host: str, port: int):
+    def _lz4_compression_worker(self, udp_socket: socket.socket, host: str, port: int) -> None:
         """
         Worker thread to compress and send LZ4 frames.
         """
         LOGGER.info(f"LZ4 worker started for {host}:{port}")
-        
-        HEADER_FORMAT = "!IHHI" 
+
+        HEADER_FORMAT = "!IHHI"
         HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-        
-        MAX_PAYLOAD_SIZE = self.config.streaming.rtp.mtu - 28 # (IP+UDP)
+
+        MAX_PAYLOAD_SIZE = self.config.streaming.rtp.mtu - 28  # (IP+UDP)
         data_to_send_size = MAX_PAYLOAD_SIZE - HEADER_SIZE
 
         if data_to_send_size <= 0:
             LOGGER.error(f"LZ4 worker: Invalid data_to_send_size ({data_to_send_size}). Stopping.")
             return
 
-        while self.running: 
+        while self.running:
             try:
                 raw_data = self.compression_queue.get(timeout=1.0)
-                
+
                 compressed_data = lz4.frame.compress(raw_data, compression_level=0)
                 frame_checksum = zlib.crc32(compressed_data)
 
                 self._lz4_frame_id = (self._lz4_frame_id + 1) & 0xFFFFFFFF
                 frame_id = self._lz4_frame_id
                 data_len = len(compressed_data)
-                
+
                 total_chunks = (data_len + data_to_send_size - 1) // data_to_send_size
                 if total_chunks > 65535:
                     LOGGER.error(f"Frame {frame_id} requires {total_chunks} chunks. Dropping.")
@@ -1088,36 +1148,38 @@ class GStreamerInterface:
 
                 for i in range(total_chunks):
                     chunk_index = i
-                    header = struct.pack(HEADER_FORMAT, frame_id, chunk_index, total_chunks, frame_checksum)
-                    
+                    header = struct.pack(
+                        HEADER_FORMAT, frame_id, chunk_index, total_chunks, frame_checksum
+                    )
+
                     start = i * data_to_send_size
                     end = min((i + 1) * data_to_send_size, data_len)
                     data_chunk = compressed_data[start:end]
-                    
+
                     udp_socket.sendto(header + data_chunk, (host, port))
 
             except queue.Empty:
-                continue 
+                continue
             except Exception as e:
                 if self.running:
                     LOGGER.error(f"LZ4 compression worker error: {e}", exc_info=True)
-        
+
         LOGGER.info(f"LZ4 worker stopped for {host}:{port}")
 
-    def _lz4_decompression_worker(self, appsrc: GstApp.AppSrc):
+    def _lz4_decompression_worker(self, appsrc: GstApp.AppSrc) -> None:
         """
-        Worker thread that pulls from decompression_queue, decompresses, 
+        Worker thread that pulls from decompression_queue, decompresses,
         and pushes to appsrc.
         """
         while self.running:
             try:
                 frame_id, full_compressed_data = self.decompression_queue.get(timeout=1.0)
-                
+
                 decompressed_data = lz4.frame.decompress(full_compressed_data)
-                
+
                 gst_buffer = Gst.Buffer.new_wrapped(decompressed_data)
                 GLib.idle_add(appsrc.push_buffer, gst_buffer)
-            
+
             except queue.Empty:
                 continue
             except Exception as e:
@@ -1125,95 +1187,105 @@ class GStreamerInterface:
                     LOGGER.warning(f"LZ4 decompression worker error: {e}")
         LOGGER.info("LZ4 decompression worker stopping.")
 
-    def _launch_lz4_sender(self, pipeline: GStreamerPipeline):
+    def _launch_lz4_sender(self, pipeline: GStreamerPipeline) -> None:
         """Launch LZ4 depth sender"""
         try:
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Optimize UDP socket buffer
+            pipeline.udp_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_SNDBUF, self.config.streaming.udp.buffer_size
+            )
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
-            self._setup_lz4_sender(pipeline) # Set up appsink callback
+
+            self._setup_lz4_sender(pipeline)  # Set up appsink callback
 
             if not self.compression_thread:
                 LOGGER.info("Starting LZ4 compression worker thread...")
                 self.compression_thread = threading.Thread(
                     target=self._lz4_compression_worker,
                     args=(pipeline.udp_socket, self.config.network.server.ip, pipeline.port),
-                    daemon=True
+                    daemon=True,
                 )
                 self.compression_thread.start()
-            
+
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
-            
+
             state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
             if state == Gst.State.PLAYING:
                 LOGGER.info(f"Started LZ4 {pipeline.stream_type.value}")
             else:
                 LOGGER.warning(f"Pipeline state: {state.value_nick}, pending: {pending.value_nick}")
-            
+
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
-            
+
         except Exception as e:
             LOGGER.error(f"Launch LZ4 sender failed: {e}")
             self._cleanup_pipeline(pipeline)
             raise
 
-    def _setup_lz4_sender(self, pipeline: GStreamerPipeline):
+    def _setup_lz4_sender(self, pipeline: GStreamerPipeline) -> None:
         """Configure LZ4 sender appsink callback"""
         appsink = pipeline.gst_pipeline.get_by_name("sink")
         if not appsink:
             raise RuntimeError("Could not find 'sink' element in LZ4 sender pipeline")
-        
+
         appsink.connect("new-sample", self._on_sender_new_sample, pipeline)
         LOGGER.info(f"LZ4 Sender: appsink callback connected for port {pipeline.port}")
 
-    def _setup_lz4_receiver(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
+    def _setup_lz4_receiver(
+        self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler
+    ) -> None:
         """Configure LZ4 receiver socket listener thread"""
         if not appsrc:
             raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
-        
+
         pipeline.udp_socket.bind(("", pipeline.port))
         pipeline.udp_socket.settimeout(1.0)
-        
+
         pipeline.socket_thread = threading.Thread(
-            target=self._lz4_socket_listener,
-            args=(pipeline, appsrc, reassembler),
-            daemon=True
+            target=self._lz4_socket_listener, args=(pipeline, appsrc, reassembler), daemon=True
         )
         pipeline.socket_thread.start()
         LOGGER.info(f"LZ4 Receiver: Socket listener started on port {pipeline.port}")
 
-    def _launch_lz4_receiver(self, pipeline: GStreamerPipeline):
+    def _launch_lz4_receiver(self, pipeline: GStreamerPipeline) -> None:
         """Launch LZ4 depth receiver"""
         try:
             self.running = True
             pipeline.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Optimize UDP socket buffer
+            pipeline.udp_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF, self.config.streaming.udp.buffer_size
+            )
             pipeline.gst_pipeline = Gst.parse_launch(pipeline.pipeline_str)
-            
+
             appsrc = pipeline.gst_pipeline.get_by_name("src")
             if not appsrc:
                 raise RuntimeError("Could not find 'src' in LZ4 receiver pipeline")
-            
+
             fps = self.config.realsense_camera.fps
-            reassembler = LZ4FrameReassembler(fps=fps, buffer_seconds=1.0)
+            reassembler = LZ4FrameReassembler(
+                fps=fps,
+                buffer_seconds=self.config.streaming.lz4.max_buffer_size_factor,
+                cleanup_ratio=self.config.streaming.lz4.cleanup_ratio,
+            )
 
             pipeline.running = True
             self.pipelines[pipeline.stream_type] = pipeline
 
             LOGGER.info(f"Starting {self._num_decomp_workers} LZ4 decompression workers...")
-            for i in range(self._num_decomp_workers):
+            for _ in range(self._num_decomp_workers):
                 worker_thread = threading.Thread(
-                    target=self._lz4_decompression_worker,
-                    args=(appsrc,),
-                    daemon=True
+                    target=self._lz4_decompression_worker, args=(appsrc,), daemon=True
                 )
                 worker_thread.start()
                 self.decompression_workers.append(worker_thread)
-            
+
             self._setup_lz4_receiver(pipeline, appsrc, reassembler)
-            
+
             bus = pipeline.gst_pipeline.get_bus()
             bus.add_signal_watch()
             bus.connect("message", self._on_bus_message, pipeline)
@@ -1223,29 +1295,32 @@ class GStreamerInterface:
                 LOGGER.info(f"Connecting depth_appsink callback for {pipeline.stream_type.value}")
                 appsink.connect("new-sample", self._on_new_sample, pipeline)
             else:
-                LOGGER.info(f"Running in display mode for {pipeline.stream_type.value} (no appsink found)")
-            
+                LOGGER.info(
+                    f"Running in display mode for {pipeline.stream_type.value} (no appsink found)"
+                )
+
             ret = pipeline.gst_pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to set pipeline to PLAYING")
-            
+
             state_change, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 2)
             if state == Gst.State.PLAYING:
                 LOGGER.info(f"Started LZ4 receiver {pipeline.stream_type.value}")
-            
+
         except Exception as e:
             LOGGER.error(f"Launch LZ4 receiver failed: {e}")
             self.running = False
             self._cleanup_pipeline(pipeline)
             raise
 
-
-    def _on_sender_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
+    def _on_sender_new_sample(
+        self, appsink: Gst.Element, pipeline: GStreamerPipeline
+    ) -> Gst.FlowReturn:
         """Callback for new sample from appsink (LZ4 Sender) - NON-BLOCKING"""
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.OK
-        
+
         buffer = sample.get_buffer()
         try:
             success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -1254,21 +1329,22 @@ class GStreamerInterface:
                 return Gst.FlowReturn.OK
 
             data_copy = bytes(map_info.data)
-            
+
             try:
                 self.compression_queue.put_nowait(data_copy)
             except queue.Full:
                 LOGGER.warning("LZ4 compression queue is full. Dropping frame.")
-                
+
         except Exception as e:
             LOGGER.warning(f"LZ4 _on_sender_new_sample error: {e}")
         finally:
             buffer.unmap(map_info)
-            
-        return Gst.FlowReturn.OK
-    
 
-    def _lz4_socket_listener(self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler):
+        return Gst.FlowReturn.OK
+
+    def _lz4_socket_listener(
+        self, pipeline: GStreamerPipeline, appsrc: GstApp.AppSrc, reassembler: LZ4FrameReassembler
+    ) -> None:
         """
         Thread function to listen on UDP socket, reassemble chunks,
         and push full *compressed* frames to the decompression queue.
@@ -1276,25 +1352,23 @@ class GStreamerInterface:
         while pipeline.running:
             try:
                 packet_data, _ = pipeline.udp_socket.recvfrom(65536)
-                
+
                 full_compressed_data = reassembler.add_chunk(packet_data)
-                
+
                 if full_compressed_data:
                     frame_id = reassembler.latest_full_frame_id
                     try:
-                        self.decompression_queue.put_nowait(
-                            (frame_id, full_compressed_data)
-                        )
+                        self.decompression_queue.put_nowait((frame_id, full_compressed_data))
                     except queue.Full:
                         LOGGER.warning("Decompression queue is full. Dropping frame.")
-                    
-            except socket.timeout:
-                continue 
+
+            except TimeoutError:
+                continue
             except Exception as e:
                 LOGGER.warning(f"LZ4 socket listener error: {e}")
         LOGGER.info(f"LZ4 socket listener for port {pipeline.port} stopping.")
-    
-    def _on_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline):
+
+    def _on_new_sample(self, appsink: Gst.Element, pipeline: GStreamerPipeline) -> Gst.FlowReturn:
         """
         Callback for new sample from appsink (Receiver)
         Converts GStreamer buffer to numpy and sends via local TCP socket
@@ -1302,15 +1376,15 @@ class GStreamerInterface:
         sample = appsink.pull_sample()
         if not sample:
             return Gst.FlowReturn.ERROR
-            
+
         buffer = sample.get_buffer()
         caps = sample.get_caps()
         success, map_info = buffer.map(Gst.MapFlags.READ)
-        
+
         if not success:
             LOGGER.error(f"Failed to map buffer for {pipeline.stream_type.value}")
             return Gst.FlowReturn.ERROR
-        
+
         try:
             s = caps.get_structure(0)
             width = s.get_value("width")
@@ -1320,9 +1394,9 @@ class GStreamerInterface:
             cv_image_array = None
             cv_format = None
             expected_size = 0
-            
+
             if pipeline.stream_type == StreamType.DEPTH:
-                if format_name in ['GRAY16_LE', 'GRAY16_BE', 'GRAY16']:
+                if format_name in ["GRAY16_LE", "GRAY16_BE", "GRAY16"]:
                     dtype = np.uint16
                     cv_format = "mono16"
                     expected_size = width * height * 2
@@ -1333,14 +1407,14 @@ class GStreamerInterface:
                 else:
                     return Gst.FlowReturn.ERROR
             elif pipeline.stream_type == StreamType.COLOR:
-                if format_name == 'BGR':
+                if format_name == "BGR":
                     cv_format = "bgr8"
                     expected_size = width * height * 3
                     if len(data) == expected_size:
                         cv_image_array = data.reshape(height, width, 3)
                     else:
                         return Gst.FlowReturn.OK
-                elif format_name == 'RGB':
+                elif format_name == "RGB":
                     cv_format = "rgb8"
                     expected_size = width * height * 3
                     if len(data) == expected_size:
@@ -1350,7 +1424,7 @@ class GStreamerInterface:
                 else:
                     return Gst.FlowReturn.ERROR
             elif pipeline.stream_type in [StreamType.INFRA1, StreamType.INFRA2]:
-                if format_name == 'GRAY8':
+                if format_name == "GRAY8":
                     cv_format = "mono8"
                     expected_size = width * height
                     if len(data) == expected_size:
@@ -1359,80 +1433,82 @@ class GStreamerInterface:
                         return Gst.FlowReturn.OK
                 else:
                     return Gst.FlowReturn.ERROR
-            
+
             if self.ipc_socket and cv_image_array is not None:
                 pts_ns = buffer.pts
-                
-                data_packet = msgpack.packb({
-                    "type": pipeline.stream_type.value,
-                    "shape": cv_image_array.shape,
-                    "dtype": str(cv_image_array.dtype),
-                    "encoding": cv_format,
-                    "timestamp_ns": pts_ns,
-                    "data": cv_image_array.tobytes()
-                })
-                
-                msg_len = struct.pack("!I", len(data_packet)) 
+
+                data_packet = msgpack.packb(
+                    {
+                        "type": pipeline.stream_type.value,
+                        "shape": cv_image_array.shape,
+                        "dtype": str(cv_image_array.dtype),
+                        "encoding": cv_format,
+                        "timestamp_ns": pts_ns,
+                        "data": cv_image_array.tobytes(),
+                    }
+                )
+
+                msg_len = struct.pack("!I", len(data_packet))
                 self.ipc_socket.sendall(msg_len + data_packet)
 
         except BrokenPipeError:
             LOGGER.error("ROS IPC Server disconnected! Stopping pipeline.")
             GLib.idle_add(pipeline.gst_pipeline.set_state, Gst.State.NULL)
-            self.running = False 
+            self.running = False
             return Gst.FlowReturn.ERROR
-            
+
         except Exception as e:
             LOGGER.error(
-                f"Error processing sample for {pipeline.stream_type.value}: {e}",
-                exc_info=True
+                f"Error processing sample for {pipeline.stream_type.value}: {e}", exc_info=True
             )
             return Gst.FlowReturn.ERROR
         finally:
             buffer.unmap(map_info)
 
         return Gst.FlowReturn.OK
-    
-    def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
+
+    def _cleanup_pipeline(self, pipeline: GStreamerPipeline) -> None:
         """Clean up a pipeline"""
         if pipeline.gst_pipeline:
             pipeline.gst_pipeline.set_state(Gst.State.NULL)
-        
+
         if pipeline.udp_socket:
             pipeline.udp_socket.close()
             pipeline.udp_socket = None
-        
+
         if pipeline.socket_thread:
             pipeline.socket_thread.join(timeout=2)
             pipeline.socket_thread = None
-    
-    def stop_pipeline(self, stream_type: StreamType):
+
+    def stop_pipeline(self, stream_type: StreamType) -> None:
         """Stop a specific pipeline with proper cleanup"""
         if stream_type in self.pipelines:
             pipeline = self.pipelines[stream_type]
-            if not pipeline.running: return
-                
+            if not pipeline.running:
+                return
+
             LOGGER.info(f"Stopping pipeline for {stream_type.value}...")
-            self.running = False 
-            pipeline.running = False 
+            self.running = False
+            pipeline.running = False
 
             if self.rs_thread:
                 LOGGER.info("Waiting for pyrealsense2 thread to stop...")
                 self.rs_thread.join(timeout=2)
                 self.rs_thread = None
-                
+
             if pipeline.paired_pipeline and pipeline.paired_pipeline.stream_type in self.pipelines:
                 paired = pipeline.paired_pipeline
                 paired.running = False
                 self._cleanup_pipeline(paired)
                 if paired.stream_type in self.pipelines:
                     del self.pipelines[paired.stream_type]
-            
+
             self._cleanup_pipeline(pipeline)
             del self.pipelines[stream_type]
-            
+
             LOGGER.info(f"Stopped {stream_type.value}")
-    
-    def stop_all(self):
+
+    def stop_all(self) -> None:
         """Stop all running pipelines"""
         for stream_type in list(self.pipelines.keys()):
             self.stop_pipeline(stream_type)
@@ -1455,16 +1531,21 @@ class GStreamerInterface:
 
         self.running = False
         LOGGER.info("All resources cleaned up")
-    
-    def __enter__(self):
+
+    def __enter__(self) -> "GStreamerInterface":
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> Literal[False]:
         self.stop_all()
         if g_main_loop.is_running():
             g_main_loop.quit()
         return False
-    
+
     def _get_stream_config(self, stream_type: StreamType) -> StreamConfig:
         """Get stream config, mapping split types to base types"""
         type_map = {
@@ -1474,10 +1555,10 @@ class GStreamerInterface:
             StreamType.INFRA2: "infra2",
             # StreamType.IMU: "imu"
         }
-        
+
         config_key = type_map.get(stream_type, stream_type.value)
         return self.config.get_stream_config(config_key)
-    
+
     def _get_port(self, stream_type: StreamType) -> int:
         """Get port for stream type"""
         base_ports = {
@@ -1487,18 +1568,18 @@ class GStreamerInterface:
             StreamType.INFRA2: self.config.get_stream_port("infra2"),
             # StreamType.IMU: self.config.get_stream_port("imu")
         }
-        return base_ports.get(stream_type, 5000)
-    
-    def get_pipeline_string(self, stream_type: StreamType, mode: Literal["sender", "receiver"]) -> str:
+        return base_ports.get(stream_type, 5000)  # type: ignore[no-any-return]
+
+    def get_pipeline_string(
+        self, stream_type: StreamType, mode: Literal["sender", "receiver"]
+    ) -> str:
         if mode == "sender":
             pipeline = self.build_sender_pipeline(stream_type)
         else:
-            pipeline = self.build_receiver_pipeline(
-                stream_type
-                )
+            pipeline = self.build_receiver_pipeline(stream_type)
         return pipeline.pipeline_str
-    
-    def get_pipeline_status(self) -> Dict[str, bool]:
+
+    def get_pipeline_status(self) -> dict[str, bool]:
         """Get status of all pipelines"""
         status = {}
         for stream_type, pipeline in self.pipelines.items():
@@ -1506,17 +1587,16 @@ class GStreamerInterface:
                 status[stream_type.value] = False
                 continue
 
-            if pipeline.gst_pipeline: 
+            if pipeline.gst_pipeline:
                 try:
                     ret, state, pending = pipeline.gst_pipeline.get_state(Gst.SECOND * 1)
-                    status[stream_type.value] = (state >= Gst.State.PAUSED)
+                    status[stream_type.value] = state >= Gst.State.PAUSED
                 except Exception:
                     status[stream_type.value] = False
             else:
                 status[stream_type.value] = False
         return status
-    
-    
+
 
 def create_sender_interface(config_path: str = "src/config/config.yaml") -> GStreamerInterface:
     config = StreamingConfigManager.from_yaml(config_path)
