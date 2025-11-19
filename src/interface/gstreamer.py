@@ -331,7 +331,7 @@ class GStreamerInterface:
                 rs_config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
                 appsrcs[StreamType.COLOR] = pipelines[StreamType.COLOR].gst_pipeline.get_by_name("src")
 
-            if StreamType.DEPTH in stream_types and self.config.realsense_camera.depth.encoding == "rtp":
+            if StreamType.DEPTH in stream_types:
                 LOGGER.info(f"Configuring RealSense: Depth at {width}x{height} @ {fps}fps (Z16)")
                 rs_config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
                 appsrcs[StreamType.DEPTH] = pipelines[StreamType.DEPTH].gst_pipeline.get_by_name("src")
@@ -646,8 +646,6 @@ class GStreamerInterface:
         
         else:
             raise ValueError(f"build_sender_pipeline called with unhandled type: {stream_type}")
-    
-    # ==================== Receiver Functions ====================
     
     def build_receiver_pipeline(
         self,
@@ -1055,8 +1053,6 @@ class GStreamerInterface:
             LOGGER.error(f"Launch receiver failed: {e}", exc_info=True)
             self._cleanup_pipeline(pipeline)
             raise
-    
-    # ==================== Callback Methods ====================
 
     def _lz4_compression_worker(self, udp_socket: socket.socket, host: str, port: int):
         """
@@ -1395,8 +1391,6 @@ class GStreamerInterface:
             buffer.unmap(map_info)
 
         return Gst.FlowReturn.OK
-    
-    # ==================== Cleanup Methods ====================
     
     def _cleanup_pipeline(self, pipeline: GStreamerPipeline):
         """Clean up a pipeline"""
