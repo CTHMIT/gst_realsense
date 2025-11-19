@@ -184,12 +184,12 @@ class GStreamerInterface:
         
         self.ipc_socket: Optional[socket.socket] = None
         self.ipc_target: Tuple[str, int] = ("127.0.0.1", 12345)
-        self.imu_config = self.config.realsense_camera.imu
+        # self.imu_config = self.config.realsense_camera.imu
 
-        self.imu_rcv_socket: Optional[socket.socket] = None
-        self.imu_rcv_thread: Optional[threading.Thread] = None
-        self.imu_socket: Optional[socket.socket] = None
-        self.imu_port: int = self.imu_config.port
+        # self.imu_rcv_socket: Optional[socket.socket] = None
+        # self.imu_rcv_thread: Optional[threading.Thread] = None
+        # self.imu_socket: Optional[socket.socket] = None
+        # self.imu_port: int = self.imu_config.port
         
         self._validate_config()
 
@@ -203,14 +203,14 @@ class GStreamerInterface:
             
             LOGGER.info("IPC TCP Client connected to ROS Server.")
 
-            if not self.imu_rcv_thread:
-                LOGGER.info("Starting IMU receiver thread...")
-                self.running = True 
-                self.imu_rcv_thread = threading.Thread(
-                    target=self._imu_socket_listener,
-                    daemon=True
-                )
-                self.imu_rcv_thread.start()
+            # if not self.imu_rcv_thread:
+            #     LOGGER.info("Starting IMU receiver thread...")
+            #     self.running = True 
+            #     self.imu_rcv_thread = threading.Thread(
+            #         target=self._imu_socket_listener,
+            #         daemon=True
+            #     )
+            #     self.imu_rcv_thread.start()
 
             return True
         except ConnectionRefusedError:
@@ -230,81 +230,81 @@ class GStreamerInterface:
         if self.config.streaming.rtp.mtu > self.config.network.transport.mtu:
             LOGGER.warning(f"RTP MTU ({self.config.streaming.rtp.mtu}) > Transport MTU ({self.config.network.transport.mtu})")
     
-    def _imu_socket_listener(self):
-        """
-        Thread function to listen on UDP socket for IMU packets
-        and forward them to the IPC TCP socket.
-        """
-        try:
-            self.imu_rcv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.imu_rcv_socket.bind(("", self.imu_port))
-            # self.imu_rcv_socket.settimeout(1.0) # blocking
-            self.imu_rcv_socket.setblocking(False) # non-blocking
-            LOGGER.info(f"IMU Receiver: Socket listener started on port {self.imu_port}")
+    # def _imu_socket_listener(self):
+    #     """
+    #     Thread function to listen on UDP socket for IMU packets
+    #     and forward them to the IPC TCP socket.
+    #     """
+    #     try:
+    #         self.imu_rcv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    #         self.imu_rcv_socket.bind(("", self.imu_port))
+    #         # self.imu_rcv_socket.settimeout(1.0) # blocking
+    #         self.imu_rcv_socket.setblocking(False) # non-blocking
+    #         LOGGER.info(f"IMU Receiver: Socket listener started on port {self.imu_port}")
 
-            while self.running:
-                latest_packet = None
-                try:
-                    while True:
-                        latest_packet, _ = self.imu_rcv_socket.recvfrom(1024)
+    #         while self.running:
+    #             latest_packet = None
+    #             try:
+    #                 while True:
+    #                     latest_packet, _ = self.imu_rcv_socket.recvfrom(1024)
                         
-                except BlockingIOError: 
-                    pass 
+    #             except BlockingIOError: 
+    #                 pass 
 
-                if latest_packet and self.ipc_socket:
-                    try:
-                        msg_len = struct.pack("!I", len(latest_packet))
-                        self.ipc_socket.sendall(msg_len + latest_packet)
+    #             if latest_packet and self.ipc_socket:
+    #                 try:
+    #                     msg_len = struct.pack("!I", len(latest_packet))
+    #                     self.ipc_socket.sendall(msg_len + latest_packet)
                     
-                    except BrokenPipeError:
-                        LOGGER.error("ROS IPC Server disconnected! Stopping IMU listener.")
-                        self.running = False
-                    except Exception as e:
-                        if self.running:
-                            LOGGER.warning(f"IMU IPC forward error: {e}")
+    #                 except BrokenPipeError:
+    #                     LOGGER.error("ROS IPC Server disconnected! Stopping IMU listener.")
+    #                     self.running = False
+    #                 except Exception as e:
+    #                     if self.running:
+    #                         LOGGER.warning(f"IMU IPC forward error: {e}")
                 
-                time.sleep(0.001) 
+    #             time.sleep(0.001) 
 
-        except Exception as e:
-                if self.running:
-                    LOGGER.error(f"Failed to start IMU socket listener: {e}", exc_info=True)
-        finally:
-            if self.imu_rcv_socket:
-                self.imu_rcv_socket.close()
-                self.imu_rcv_socket = None
-            LOGGER.info(f"IMU socket listener for port {self.imu_port} stopping.")
+    #     except Exception as e:
+    #             if self.running:
+    #                 LOGGER.error(f"Failed to start IMU socket listener: {e}", exc_info=True)
+    #     finally:
+    #         if self.imu_rcv_socket:
+    #             self.imu_rcv_socket.close()
+    #             self.imu_rcv_socket = None
+    #         LOGGER.info(f"IMU socket listener for port {self.imu_port} stopping.")
 
-    def imu_callback(self, frame):
-            if not self.running or not self.imu_socket:
-                return
+    # def imu_callback(self, frame):
+    #         if not self.running or not self.imu_socket:
+    #             return
             
-            try:
-                if frame.is_motion_frame():
-                    data = frame.as_motion_frame().get_motion_data()
-                    timestamp_ns = int(frame.get_timestamp() * 1_000_000)
-                    packet = None
+    #         try:
+    #             if frame.is_motion_frame():
+    #                 data = frame.as_motion_frame().get_motion_data()
+    #                 timestamp_ns = int(frame.get_timestamp() * 1_000_000)
+    #                 packet = None
                     
-                    stream_type = frame.get_profile().stream_type()
+    #                 stream_type = frame.get_profile().stream_type()
                     
-                    if stream_type == rs.stream.accel:
-                        packet = {
-                            "type": "imu_accel",
-                            "timestamp_ns": timestamp_ns,
-                            "data": (data.x, data.y, data.z)
-                        }
-                    elif stream_type == rs.stream.gyro:
-                        packet = {
-                            "type": "imu_gyro",
-                            "timestamp_ns": timestamp_ns,
-                            "data": (data.x, data.y, data.z)
-                        }
+    #                 if stream_type == rs.stream.accel:
+    #                     packet = {
+    #                         "type": "imu_accel",
+    #                         "timestamp_ns": timestamp_ns,
+    #                         "data": (data.x, data.y, data.z)
+    #                     }
+    #                 elif stream_type == rs.stream.gyro:
+    #                     packet = {
+    #                         "type": "imu_gyro",
+    #                         "timestamp_ns": timestamp_ns,
+    #                         "data": (data.x, data.y, data.z)
+    #                     }
                     
-                    if packet:
-                        packed_data = msgpack.packb(packet)
-                        self.imu_socket.sendto(packed_data, (self.config.network.server.ip, self.imu_port))
+    #                 if packet:
+    #                     packed_data = msgpack.packb(packet)
+    #                     self.imu_socket.sendto(packed_data, (self.config.network.server.ip, self.imu_port))
             
-            except Exception as e:
-                LOGGER.warning(f"IMU callback error: {e}")
+    #         except Exception as e:
+    #             LOGGER.warning(f"IMU callback error: {e}")
 
     def _pyrealsense_capture_loop(
         self, 
@@ -345,17 +345,17 @@ class GStreamerInterface:
                 appsrcs[StreamType.INFRA2] = pipelines[StreamType.INFRA2].gst_pipeline.get_by_name("src")
 
             for stream_type in stream_types:
-                if stream_type == StreamType.IMU:
-                    continue
+                # if stream_type == StreamType.IMU:
+                #     continue
                 if stream_type not in appsrcs or not appsrcs[stream_type]:
                     LOGGER.error(f"Could not find appsrc element named 'src' in pipeline for {stream_type.value}! Thread stopping.")
                     return
 
-            if StreamType.IMU in stream_types:
-                LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
+            # if StreamType.IMU in stream_types:
+            #     LOGGER.info(f"Configuring RealSense: IMU (Accel Hz: {self.imu_config.accel_hz}, Gyro Hz: {self.imu_config.gyro_hz})")
             
-                rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz)
-                rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
+            #     rs_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.imu_config.accel_hz)
+            #     rs_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.imu_config.gyro_hz)
 
             self.rs_pipeline = rs.pipeline()
             profile = self.rs_pipeline.start(rs_config)
@@ -377,10 +377,10 @@ class GStreamerInterface:
                 accel_frame = frames.first_or_default(rs.stream.accel)
                 gyro_frame = frames.first_or_default(rs.stream.gyro)
                 
-                if accel_frame:
-                    self.imu_callback(accel_frame)
-                if gyro_frame:
-                    self.imu_callback(gyro_frame)
+                # if accel_frame:
+                #     self.imu_callback(accel_frame)
+                # if gyro_frame:
+                #     self.imu_callback(gyro_frame)
 
                 if StreamType.COLOR in appsrcs:
                     color_frame = frames.get_color_frame()
@@ -456,17 +456,17 @@ class GStreamerInterface:
         final_stream_list = list(set(stream_types))
 
         try:
-            try:
-                self.imu_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                target_ip = self.config.network.server.ip
-                LOGGER.info(f"IMU UDP socket created, targeting {target_ip}:{self.imu_port}")
-            except Exception as e:
-                LOGGER.error(f"Failed to create IMU socket: {e}", exc_info=True)
-                return False
+            # try:
+            #     self.imu_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            #     target_ip = self.config.network.server.ip
+            #     LOGGER.info(f"IMU UDP socket created, targeting {target_ip}:{self.imu_port}")
+            # except Exception as e:
+            #     LOGGER.error(f"Failed to create IMU socket: {e}", exc_info=True)
+            #     return False
 
             for stream_type in final_stream_list:
-                if stream_type == StreamType.IMU:
-                    continue
+                # if stream_type == StreamType.IMU:
+                #     continue
 
                 if stream_type not in pipelines: 
                     pipelines[stream_type] = self.build_sender_pipeline(stream_type)
@@ -480,8 +480,8 @@ class GStreamerInterface:
 
             self.running = True
             for stream_type in final_stream_list:
-                if stream_type == StreamType.IMU:
-                    continue
+                # if stream_type == StreamType.IMU:
+                #     continue
                 if stream_type in pipelines:
                     LOGGER.info(f"Launching GStreamer pipeline for {stream_type.value}...")
                     self.launch_sender_pipeline(pipelines[stream_type])
@@ -1434,16 +1434,16 @@ class GStreamerInterface:
         for stream_type in list(self.pipelines.keys()):
             self.stop_pipeline(stream_type)
 
-        if self.imu_rcv_thread:
-            LOGGER.info("Stopping IMU receiver thread...")
-            self.imu_rcv_thread.join(timeout=1)
-            self.imu_rcv_thread = None
-            LOGGER.info("IMU receiver thread stopped.")
+        # if self.imu_rcv_thread:
+        #     LOGGER.info("Stopping IMU receiver thread...")
+        #     self.imu_rcv_thread.join(timeout=1)
+        #     self.imu_rcv_thread = None
+        #     LOGGER.info("IMU receiver thread stopped.")
 
-        if self.imu_socket:
-            self.imu_socket.close()
-            self.imu_socket = None
-            LOGGER.info("IMU Sender Socket closed")
+        # if self.imu_socket:
+        #     self.imu_socket.close()
+        #     self.imu_socket = None
+        #     LOGGER.info("IMU Sender Socket closed")
 
         if self.ipc_socket:
             self.ipc_socket.close()
@@ -1469,7 +1469,7 @@ class GStreamerInterface:
             StreamType.DEPTH: "depth",
             StreamType.INFRA1: "infra1",
             StreamType.INFRA2: "infra2",
-            StreamType.IMU: "imu"
+            # StreamType.IMU: "imu"
         }
         
         config_key = type_map.get(stream_type, stream_type.value)
@@ -1482,7 +1482,7 @@ class GStreamerInterface:
             StreamType.DEPTH: self.config.get_stream_port("depth"),
             StreamType.INFRA1: self.config.get_stream_port("infra1"),
             StreamType.INFRA2: self.config.get_stream_port("infra2"),
-            StreamType.IMU: self.config.get_stream_port("imu")
+            # StreamType.IMU: self.config.get_stream_port("imu")
         }
         return base_ports.get(stream_type, 5000)
     

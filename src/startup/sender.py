@@ -169,7 +169,7 @@ Examples:
     stream_group.add_argument("--depth", action="store_true", help="Enable depth stream")
     stream_group.add_argument("--infra1", action="store_true", help="Enable left infrared (IR1)")
     stream_group.add_argument("--infra2", action="store_true", help="Enable right infrared (IR2)")
-    stream_group.add_argument("--imu", action="store_true", help="Enable IMU (IMU)")
+    # stream_group.add_argument("--imu", action="store_true", help="Enable IMU (IMU)")
         
     parser.add_argument(
         "--verbose",
@@ -191,7 +191,7 @@ def main():
     video_streams_present = False
 
     if args.all:
-        stream_types = [StreamType.COLOR, StreamType.DEPTH, StreamType.IMU]
+        stream_types = [StreamType.COLOR, StreamType.DEPTH] #, StreamType.IMU]
         video_streams_present = True 
     else:
         if args.color:
@@ -207,14 +207,14 @@ def main():
             stream_types.append(StreamType.INFRA2)
             video_streams_present = True 
         
-        if args.imu:
-            stream_types.append(StreamType.IMU)
-            if not video_streams_present:
-                LOGGER.warning(
-                    "IMU stream requested without a video stream. "
-                    "Automatically enabling DEPTH as IMU requires at least one video stream."
-                )
-                stream_types.append(StreamType.DEPTH)
+        # if args.imu:
+        #     stream_types.append(StreamType.IMU)
+        #     if not video_streams_present:
+        #         LOGGER.warning(
+        #             "IMU stream requested without a video stream. "
+        #             "Automatically enabling DEPTH as IMU requires at least one video stream."
+        #         )
+        #         stream_types.append(StreamType.DEPTH)
 
     
     if not stream_types:
